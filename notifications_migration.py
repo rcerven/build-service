@@ -50,9 +50,16 @@ def parse_ir(all_ir):
     for config in all_ir['items']:
         ir_name = config['metadata']['name']
         ir_namespace = config['metadata']['namespace']
-        notifications = config['spec'].get('notifications')
 
         print("================================================================================================================================")
+
+        if 'spec' not in config:
+            print(f"missing spec - {ir_name} - {ir_namespace}   skipping IR")
+            print("==================================")
+            continue
+
+        notifications = config['spec'].get('notifications')
+
 
         print(f"Processing {ir_name} - {ir_namespace}")
 
