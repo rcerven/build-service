@@ -378,8 +378,8 @@ def parse_components(all_components):
                 print(f"Failed to update component {comp_name} in {comp_namespace} : {error}")
                 exit(1)
 
-         if 'labels' in serviceaccount['metadata']:
-             if 'appstudio.redhat.com/linked-by-remote-secret' in serviceaccount['metadata']['labels']:
+        if 'labels' in serviceaccount['metadata']:
+            if 'appstudio.redhat.com/linked-by-remote-secret' in serviceaccount['metadata']['labels']:
                 print("have to remove linked-by-remote-secret label from SA")
                 patch = '[{"op": "remove", "path": "/metadata/labels/appstudio.redhat.com~1linked-by-remote-secret"}]'
                 delete_label = ['oc', 'patch', '-n', comp_namespace, 'serviceaccount/appstudio-pipeline', '-p', patch, '--type', 'json']
