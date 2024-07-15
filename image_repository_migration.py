@@ -221,7 +221,7 @@ def parse_components(all_components):
             ir_dict['metadata']['name'] = image_repository_name
             ir_dict['metadata']['namespace'] = comp_namespace
 
-            if comp_image_annotation:
+            if comp_containerimage:
                 del ir_dict['metadata']['annotations']
 
             image_json = json.loads(comp_image_annotation)
