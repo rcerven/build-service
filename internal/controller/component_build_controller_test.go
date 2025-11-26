@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -125,6 +126,8 @@ var _ = Describe("Component build controller", func() {
 			component1Key       = types.NamespacedName{Name: "component-sa-1", Namespace: namespace}
 			component2Key       = types.NamespacedName{Name: "component-sa-2", Namespace: namespace}
 			buildRoleBindingKey = types.NamespacedName{Name: buildPipelineRoleBindingName, Namespace: namespace}
+			namespaceSecretKey  = types.NamespacedName{Name: getNamespacePullSecretName(namespace), Namespace: namespace}
+			namespaceSaKey      = types.NamespacedName{Name: IntegrationTestsServiceAccountName, Namespace: namespace}
 		)
 
 		_ = BeforeEach(func() {
@@ -138,6 +141,7 @@ var _ = Describe("Component build controller", func() {
 			}
 			createSecret(pacSecretKey, pacSecretData)
 			createDefaultBuildPipelineConfigMap(defaultPipelineConfigMapKey)
+			createServiceAccount(namespaceSaKey)
 
 			ResetTestGitProviderClient()
 		})
@@ -149,6 +153,8 @@ var _ = Describe("Component build controller", func() {
 			deleteRoleBinding(buildRoleBindingKey)
 			deleteServiceAccount(getComponentServiceAccountKey(component1Key))
 			deleteServiceAccount(getComponentServiceAccountKey(component2Key))
+			deleteServiceAccount(namespaceSaKey)
+			deleteSecret(namespaceSecretKey)
 		})
 
 		It("should create build pipeline dedicated service account and role binding", func() {
@@ -159,6 +165,69 @@ var _ = Describe("Component build controller", func() {
 			Expect(roleBinding.RoleRef.Kind).To(Equal("ClusterRole"))
 			Expect(roleBinding.RoleRef.Name).To(Equal(BuildPipelineClusterRoleName))
 			Expect(roleBinding.Subjects).To(HaveLen(1))
+
+			waitComponentAnnotationExists(component1Key, EnsureNamespacePullSecretAnnotation, "false")
+			namespaceSecret := waitSecretCreated(namespaceSecretKey)
+			component1SA := waitServiceAccount(component1SAKey)
+			namespaceSA := waitServiceAccount(namespaceSaKey)
+
+			// namespace secret is linked to component SA
+			Expect(component1SA.ImagePullSecrets).To(HaveLen(0))
+			Expect(component1SA.Secrets).To(HaveLen(1))
+			Expect(component1SA.Secrets[0].Name).To(Equal(namespaceSecretKey.Name))
+
+			// namespace secret is linked to namespace SA
+			Expect(namespaceSA.ImagePullSecrets).To(HaveLen(1))
+			Expect(namespaceSA.ImagePullSecrets[0].Name).To(Equal(namespaceSecretKey.Name))
+			Expect(namespaceSA.Secrets).To(HaveLen(1))
+			Expect(namespaceSA.Secrets[0].Name).To(Equal(namespaceSecretKey.Name))
+
+			// namespace secret is created empty because there weren't any IR pull secrets
+			namespaceSecretDockerConfigJson := string(namespaceSecret.Data[corev1.DockerConfigJsonKey])
+			var decodedSecret dockerConfigJson
+			Expect(json.Unmarshal([]byte(namespaceSecretDockerConfigJson), &decodedSecret)).To(Succeed())
+			Expect(decodedSecret.Auths).To(HaveLen(0))
+
+			// pull secret with IR owner will be added to namespace secret
+			pullSecret1Data := generateDockerConfigJson("registry1", "user1", "pass1")
+			pullSecret1Key := types.NamespacedName{Name: "pull1-image-pull", Namespace: namespace}
+			// pull secret with IR owner will be added to namespace secret
+			pullSecret2Data := generateDockerConfigJson("registry2", "user2", "pass2")
+			pullSecret2Key := types.NamespacedName{Name: "pull2-image-pull", Namespace: namespace}
+			// push secret with IR owner won't be added to namespace secret
+			pushSecretData := generateDockerConfigJson("registry3", "user3", "pass3")
+			pushSecretKey := types.NamespacedName{Name: "push3-image-push", Namespace: namespace}
+			// user secret without owner, named like IR pull secret, won't be added to namespace secret
+			userSecret1Data := generateDockerConfigJson("registry4", "user4", "pass4")
+			userSecret1Key := types.NamespacedName{Name: "pull4-image-pull", Namespace: namespace}
+			// user secret without owner, won't be added to namespace secret
+			userSecret2Data := generateDockerConfigJson("registry5", "user5", "pass5")
+			userSecret2Key := types.NamespacedName{Name: "pull5-user", Namespace: namespace}
+
+			createDockerConfigSecret(pullSecret1Key, pullSecret1Data, true)
+			defer deleteSecret(pullSecret1Key)
+			createDockerConfigSecret(pullSecret2Key, pullSecret2Data, true)
+			defer deleteSecret(pullSecret2Key)
+			createDockerConfigSecret(pushSecretKey, pushSecretData, true)
+			defer deleteSecret(pushSecretKey)
+			createDockerConfigSecret(userSecret1Key, userSecret1Data, false)
+			defer deleteSecret(userSecret1Key)
+			createDockerConfigSecret(userSecret2Key, userSecret2Data, false)
+			defer deleteSecret(userSecret2Key)
+
+			// delete namespace secret and force creation of it
+			deleteSecret(namespaceSecretKey)
+			setComponentAnnotation(component1Key, EnsureNamespacePullSecretAnnotation, "true")
+			waitComponentAnnotationExists(component1Key, EnsureNamespacePullSecretAnnotation, "false")
+
+			namespaceSecret = waitSecretCreated(namespaceSecretKey)
+			// namespace secret is created with 2 IR pull secrets
+			namespaceSecretDockerConfigJson = string(namespaceSecret.Data[corev1.DockerConfigJsonKey])
+			Expect(json.Unmarshal([]byte(namespaceSecretDockerConfigJson), &decodedSecret)).To(Succeed())
+			Expect(decodedSecret.Auths).To(HaveLen(2))
+
+			Expect(decodedSecret.Auths["registry1"].Auth).To(Equal(base64.StdEncoding.EncodeToString([]byte("user1:pass1"))))
+			Expect(decodedSecret.Auths["registry2"].Auth).To(Equal(base64.StdEncoding.EncodeToString([]byte("user2:pass2"))))
 		})
 
 		It("should create build pipeline dedicated service account for each component and common role binding", func() {
@@ -177,6 +246,30 @@ var _ = Describe("Component build controller", func() {
 			Expect(roleBinding.RoleRef.Kind).To(Equal("ClusterRole"))
 			Expect(roleBinding.RoleRef.Name).To(Equal(BuildPipelineClusterRoleName))
 			Expect(roleBinding.Subjects).To(HaveLen(2))
+
+			waitComponentAnnotationExists(component1Key, EnsureNamespacePullSecretAnnotation, "false")
+			waitComponentAnnotationExists(component2Key, EnsureNamespacePullSecretAnnotation, "false")
+
+			waitSecretCreated(namespaceSecretKey)
+			component1SA := waitServiceAccount(component1SAKey)
+			component2SA := waitServiceAccount(component2SAKey)
+			namespaceSA := waitServiceAccount(namespaceSaKey)
+
+			// namespace secret is linked to component SA
+			Expect(component1SA.ImagePullSecrets).To(HaveLen(0))
+			Expect(component1SA.Secrets).To(HaveLen(1))
+			Expect(component1SA.Secrets[0].Name).To(Equal(namespaceSecretKey.Name))
+
+			// namespace secret is linked to component SA
+			Expect(component2SA.ImagePullSecrets).To(HaveLen(0))
+			Expect(component2SA.Secrets).To(HaveLen(1))
+			Expect(component2SA.Secrets[0].Name).To(Equal(namespaceSecretKey.Name))
+
+			// namespace secret is linked to namespace SA
+			Expect(namespaceSA.ImagePullSecrets).To(HaveLen(1))
+			Expect(namespaceSA.ImagePullSecrets[0].Name).To(Equal(namespaceSecretKey.Name))
+			Expect(namespaceSA.Secrets).To(HaveLen(1))
+			Expect(namespaceSA.Secrets[0].Name).To(Equal(namespaceSecretKey.Name))
 		})
 
 		It("should remove build pipeline dedicated service account for each component and common role binding when the last service account removed", func() {

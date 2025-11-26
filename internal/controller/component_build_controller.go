@@ -69,6 +69,14 @@ const (
 	buildPipelineConfigName            = "config.yaml"
 
 	waitForContainerImageMessage = "waiting for spec.containerImage to be set by ImageRepository with annotation image-controller.appstudio.redhat.com/update-component-image"
+
+	ComponentModelVersionAnnotation = "build.appstudio.openshift.io/component_model_version"
+	//DefaultComponentModelVersion = "v1"
+	DefaultComponentModelVersion = "v2"
+	// when true, will enforce namespace secret creation
+	// when false, doesn't check namespace secret existence anymore
+	EnsureNamespacePullSecretAnnotation = "build.appstudio.openshift.io/ensure-namespace-pull-secret"
+	IntegrationTestsServiceAccountName  = "konflux-integration-runner"
 )
 
 type BuildStatus struct {
@@ -183,6 +191,56 @@ func (r *ComponentBuildReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		// because Image Controller operator expects the Service Account to exist to link push secret to it.
 		if err := r.EnsureBuildPipelineServiceAccount(ctx, &component); err != nil {
 			return ctrl.Result{}, err
+		}
+
+		// ensure namespace secret forced by annotation, useful for migration
+		ensureNamespaceSecret, ensureNamespaceSecretExists := component.Annotations[EnsureNamespacePullSecretAnnotation]
+		if ensureNamespaceSecretExists && ensureNamespaceSecret == "true" {
+			if err := r.ensureNamespacePullSecret(ctx, component.Namespace); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			component.Annotations[EnsureNamespacePullSecretAnnotation] = "false"
+			if err := r.Client.Update(ctx, &component); err != nil {
+				log.Error(err, "failed to update component after explicit ensuring namespace pull secret")
+				return ctrl.Result{}, err
+			}
+			log.Info("updated component after explicit ensuring namespace pull secret")
+			r.WaitForCacheUpdate(ctx, req.NamespacedName, &component)
+
+			return ctrl.Result{}, nil
+		}
+
+		// ensure namespace secret also after component has already finalizer
+		if controllerutil.ContainsFinalizer(&component, PaCProvisionFinalizer) {
+			// don't check secret if namespace created annotation is set to true already
+			// this will prevent getting Secret multiple times after finalizer is set
+			if !ensureNamespaceSecretExists || ensureNamespaceSecret != "false" {
+				if err := r.ensureNamespacePullSecret(ctx, component.Namespace); err != nil {
+					return ctrl.Result{}, err
+				}
+
+				// set namespace pull secret created annotation
+				component.Annotations[EnsureNamespacePullSecretAnnotation] = "false"
+				if err := r.Client.Update(ctx, &component); err != nil {
+					log.Error(err, "failed to update component after implicit ensuring namespace pull secret")
+					return ctrl.Result{}, err
+				}
+				log.Info("updated component after implicit ensuring namespace pull secret")
+				r.WaitForCacheUpdate(ctx, req.NamespacedName, &component)
+
+				return ctrl.Result{}, nil
+			}
+
+			// add namespace secret to namespace SA
+			if err := r.updateSaWithNamespacePullSecret(ctx, IntegrationTestsServiceAccountName, component.Namespace, true); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			// add namespace secret to component SA
+			if err := r.updateSaWithNamespacePullSecret(ctx, getBuildPipelineServiceAccountName(component.Name), component.Namespace, false); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 	}
 
