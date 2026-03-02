@@ -54,7 +54,8 @@ func TestGetProvisionTimeMetricsBuckets(t *testing.T) {
 	}
 }
 
-func TestReadBuildStatus(t *testing.T) {
+// TODO remove after only new model is used
+func TestReadBuildStatusOldModel(t *testing.T) {
 	tests := []struct {
 		name                       string
 		buildStatusAnnotationValue string
@@ -105,7 +106,8 @@ func TestReadBuildStatus(t *testing.T) {
 	}
 }
 
-func TestWriteBuildStatus(t *testing.T) {
+// TODO remove after only new model is used
+func TestWriteBuildStatusOldModel(t *testing.T) {
 	tests := []struct {
 		name        string
 		component   *compapiv1alpha1.Component
@@ -353,27 +355,13 @@ func TestGeneratePaCPipelineRunForComponentOldModel(t *testing.T) {
 }
 
 func TestGeneratePaCPipelineRunForComponent(t *testing.T) {
-	component := &compapiv1alpha1.Component{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "my-component",
-			Namespace: "my-namespace",
-			//			Annotations: map[string]string{
-			//				GitProviderAnnotationName:      "github",
-			//				defaultBuildPipelineAnnotation: testPipelineAnnotation,
-			//			},
+	component := getComponentData(componentConfig{
+		componentKey: types.NamespacedName{Name: "my-component", Namespace: "my-namespace"},
+		versions: []compapiv1alpha1.ComponentVersion{
+			{Name: "version1", Revision: "custom-branch", Context: "./base_context", DockerfileURI: "containerFile"},
 		},
-		Spec: compapiv1alpha1.ComponentSpec{
-			Application:    "my-application",
-			ContainerImage: "registry.io/username/image:tag",
-			Source: compapiv1alpha1.ComponentSource{
-				ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-					GitURL: "https://githost.com/user/repo.git",
-				},
-			},
-		},
-		Status: compapiv1alpha1.ComponentStatus{},
-	}
-	versionInfo := &VersionInfo{Revision: "custom-branch", OriginalVersion: "version1", SanitizedVersion: "version1", Context: "./base_context", DockerfileURI: "containerFile"}
+	})
+	existingSpecVersions := buildVersionInfoMap(component, false)
 	param1_value := "param1_value"
 	param2_value := []string{"param2_value1", "param2_value2"}
 	pipelineSpec := &tektonapi.PipelineSpec{
@@ -397,12 +385,12 @@ func TestGeneratePaCPipelineRunForComponent(t *testing.T) {
 	pipelineDefinition := &PipelineDef{AdditionalParams: []string{"add-param1", "add-param2", "non-existing"}}
 	ResetTestGitProviderClient()
 
-	pipelineRun, err := generatePaCPipelineRunForComponent(component, pipelineSpec, pipelineDefinition, versionInfo, testGitProviderClient, true)
+	pipelineRun, err := generatePaCPipelineRunForComponent(component, pipelineSpec, pipelineDefinition, existingSpecVersions["version1"], testGitProviderClient, true)
 	if err != nil {
 		t.Error("generatePaCPipelineRunForComponent(): Failed to generate pipeline run")
 	}
 
-	if pipelineRun.Name != component.Name+"-"+versionInfo.SanitizedVersion+pipelineRunOnPRSuffix {
+	if pipelineRun.Name != component.Name+"-"+existingSpecVersions["version1"].SanitizedVersion+pipelineRunOnPRSuffix {
 		t.Error("generatePaCPipelineRunForComponent(): wrong pipeline name")
 	}
 	if pipelineRun.Namespace != "my-namespace" {
@@ -438,7 +426,7 @@ func TestGeneratePaCPipelineRunForComponent(t *testing.T) {
 	if pipelineRun.Annotations["build.appstudio.redhat.com/pull_request_number"] != "{{pull_request_number}}" {
 		t.Errorf("generatePaCPipelineRunForComponent(): wrong build.appstudio.redhat.com/pull_request_number annotation value")
 	}
-	if pipelineRun.Annotations[VersionAnnotationName] != versionInfo.OriginalVersion {
+	if pipelineRun.Annotations[VersionAnnotationName] != existingSpecVersions["version1"].OriginalVersion {
 		t.Errorf("generatePaCPipelineRunForComponent(): wrong %s annotation value", VersionAnnotationName)
 	}
 
@@ -516,7 +504,7 @@ func TestGeneratePaCPipelineRunForComponent(t *testing.T) {
 			{Name: "image-expires-after", Type: "string", Default: &tektonapi.ParamValue{Type: "string", StringVal: ""}},
 		},
 	}
-	pipelineRun2, err := generatePaCPipelineRunForComponent(component, pipelineSpec2, pipelineDefinition, versionInfo, testGitProviderClient, true)
+	pipelineRun2, err := generatePaCPipelineRunForComponent(component, pipelineSpec2, pipelineDefinition, existingSpecVersions["version1"], testGitProviderClient, true)
 	if err != nil {
 		t.Error("generatePaCPipelineRunForComponent(): Failed to generate pipeline run 2")
 	}
@@ -1557,24 +1545,15 @@ func TestGeneratePACRepositoryOldModel(t *testing.T) {
 
 func TestGeneratePACRepository(t *testing.T) {
 	getComponent := func(repoUrl string, annotations map[string]string, repoSettings *compapiv1alpha1.RepositorySettings) compapiv1alpha1.Component {
-		component := compapiv1alpha1.Component{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:        "testcomponent",
-				Namespace:   "workspace-name",
-				Annotations: annotations,
-			},
-			Spec: compapiv1alpha1.ComponentSpec{
-				Source: compapiv1alpha1.ComponentSource{
-					ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-						GitURL: repoUrl,
-					},
-				},
-			},
-		}
+		component := getComponentData(componentConfig{
+			componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+			gitURL:       repoUrl,
+			annotations:  annotations,
+		})
 		if repoSettings != nil {
 			component.Spec.RepositorySettings = *repoSettings
 		}
-		return component
+		return *component
 	}
 
 	tests := []struct {
@@ -1872,7 +1851,6 @@ func TestGeneratePACRepository(t *testing.T) {
 			expectedGithubAppTokenScopeRepos: &[]string{"scope1", "scope2"},
 			expectedCommentStrategy:          "",
 		},
-
 		{
 			name:    "should create PaC repository for GitHub application with repo settings CommentStrategy and GithubAppTokenScopeRepos",
 			repoUrl: "https://github.com/user/test-component-repository",
@@ -2272,27 +2250,17 @@ func TestGetGitProviderOldModel(t *testing.T) {
 
 func TestGetGitProvider(t *testing.T) {
 	getComponent := func(repoUrl, annotationValue string) compapiv1alpha1.Component {
-		componentMeta := metav1.ObjectMeta{
-			Name:      "testcomponent",
-			Namespace: "workspace-name",
-		}
+		component := getComponentData(componentConfig{
+			componentKey:             types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+			forceEmptyUrlAndVersions: true,
+			gitURL:                   repoUrl,
+		})
 		if annotationValue != "" {
-			componentMeta.Annotations = map[string]string{
+			component.ObjectMeta.Annotations = map[string]string{
 				GitProviderAnnotationName: annotationValue,
 			}
 		}
-
-		component := compapiv1alpha1.Component{
-			ObjectMeta: componentMeta,
-			Spec: compapiv1alpha1.ComponentSpec{
-				Source: compapiv1alpha1.ComponentSource{
-					ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-						GitURL: repoUrl,
-					},
-				},
-			},
-		}
-		return component
+		return *component
 	}
 
 	tests := []struct {
@@ -2303,7 +2271,7 @@ func TestGetGitProvider(t *testing.T) {
 		expectError                    bool
 	}{
 		{
-			name:             "should detect github provider via http url",
+			name:             "should detect github provider via https url",
 			componentRepoUrl: "https://github.com/user/test-component-repository",
 			want:             "github",
 		},
@@ -2314,7 +2282,7 @@ func TestGetGitProvider(t *testing.T) {
 			want:             "github",
 		},
 		{
-			name:             "should detect non-standard github provider via http url",
+			name:             "should detect non-standard github provider via https url",
 			componentRepoUrl: "https://cooler.github.my-company.com/user/test-component-repository",
 			want:             "github",
 		},
@@ -2324,7 +2292,7 @@ func TestGetGitProvider(t *testing.T) {
 			expectError:      true,
 		},
 		{
-			name:             "should detect gitlab provider via http url",
+			name:             "should detect gitlab provider via https url",
 			componentRepoUrl: "https://gitlab.com/user/test-component-repository",
 			want:             "gitlab",
 		},
@@ -2334,7 +2302,7 @@ func TestGetGitProvider(t *testing.T) {
 			expectError:      true,
 		},
 		{
-			name:             "should detect non-standard gitlab provider via http url",
+			name:             "should detect non-standard gitlab provider via https url",
 			componentRepoUrl: "https://cooler.gitlab.my-company.com/user/test-component-repository",
 			want:             "gitlab",
 		},
@@ -2501,6 +2469,11 @@ func TestSanitizeVersionName(t *testing.T) {
 			input:    "v1___0",
 			expected: "v1---0",
 		},
+		{
+			name:     "should handle empty string",
+			input:    "",
+			expected: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -2519,85 +2492,73 @@ func TestValidateVersions(t *testing.T) {
 		errorSubstr string
 	}{
 		{
-			name: "should validate version names are required",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{Name: "", Revision: "main"},
-							},
-						},
-					},
+			name: "should accept valid versions",
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "v1.0", Revision: "main"},
+					{Name: "v2.0", Revision: "develop"},
 				},
-			},
+			}),
+			expectError: false,
+		},
+		{
+			name: "should validate version names are required",
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "", Revision: "main"},
+				},
+			}),
 			expectError: true,
 			errorSubstr: "spec.source.versions[0].name is required",
 		},
 		{
 			name: "should validate version revisions are required",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{Name: "v1.0", Revision: ""},
-							},
-						},
-					},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "v1.0", Revision: ""},
 				},
-			},
+			}),
 			expectError: true,
 			errorSubstr: "spec.source.versions[0].revision is required",
 		},
 		{
 			name: "should detect duplicate sanitized version names",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{Name: "v1.0", Revision: "main"},
-								{Name: "v1_0", Revision: "develop"},
-							},
-						},
-					},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "v1.0", Revision: "main"},
+					{Name: "v1_0", Revision: "develop"},
 				},
-			},
+			}),
 			expectError: true,
 			errorSubstr: "conflicts with version",
 		},
 		{
 			name: "should detect empty sanitized version name",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{Name: "___", Revision: "main"},
-							},
-						},
-					},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "___", Revision: "main"},
 				},
-			},
+			}),
 			expectError: true,
 			errorSubstr: "becomes empty after sanitization",
 		},
 		{
-			name: "should accept valid versions",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{Name: "v1.0", Revision: "main"},
-								{Name: "v2.0", Revision: "develop"},
-							},
-						},
-					},
+			name: "should validate version revisions are required, while 2 versions are valid",
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "v1.0", Revision: "main"},
+					{Name: "v2.0", Revision: "develop"},
+					{Name: "v3.0", Revision: ""},
 				},
-			},
-			expectError: false,
+			}),
+			expectError: true,
+			errorSubstr: "spec.source.versions[2].revision is required",
 		},
 	}
 
@@ -2775,19 +2736,14 @@ func TestBuildVersionInfoMap(t *testing.T) {
 	}{
 		{
 			name: "should build version info map from spec with all fields",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							DockerfileURI: "Dockerfile.default",
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{Name: "v1.0", Revision: "main", Context: "app1"},
-								{Name: "v2.0", Revision: "develop", DockerfileURI: "Dockerfile.custom"},
-							},
-						},
-					},
+			component: getComponentData(componentConfig{
+				componentKey:  types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				dockerfileURI: "Dockerfile.default",
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "v1.0", Revision: "main", Context: "app1"},
+					{Name: "v2.0", Revision: "develop", DockerfileURI: "Dockerfile.custom"},
 				},
-			},
+			}),
 			fromStatus: false,
 			validate: func(t *testing.T, result map[string]*VersionInfo) {
 				assert.Equal(t, 2, len(result))
@@ -2803,18 +2759,13 @@ func TestBuildVersionInfoMap(t *testing.T) {
 		},
 		{
 			name: "should build version info map from spec without DockerfileURI and default to Dockerfile",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{Name: "v1.0", Revision: "main"},
-								{Name: "v2.0", Revision: "develop", Context: "app2"},
-							},
-						},
-					},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "v1.0", Revision: "main"},
+					{Name: "v2.0", Revision: "develop", Context: "app2"},
 				},
-			},
+			}),
 			fromStatus: false,
 			validate: func(t *testing.T, result map[string]*VersionInfo) {
 				assert.Equal(t, 2, len(result))
@@ -3424,23 +3375,18 @@ func TestValidatePipelines(t *testing.T) {
 	}{
 		{
 			name: "should validate and extract pipelines from default and versions",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					DefaultBuildPipeline: compapiv1alpha1.ComponentBuildPipeline{
-						Pull: compapiv1alpha1.PipelineDefinition{
-							PipelineRefName: "docker-build",
-						},
-					},
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{Name: "v1", Revision: "main"},
-								{Name: "v2", Revision: "develop"},
-							},
-						},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "v1", Revision: "main"},
+					{Name: "v2", Revision: "develop"},
+				},
+				defaultPipeline: compapiv1alpha1.ComponentBuildPipeline{
+					Pull: compapiv1alpha1.PipelineDefinition{
+						PipelineRefName: "docker-build",
 					},
 				},
-			},
+			}),
 			wantErrors:        0,
 			wantPipelineCount: 2, // both versions inherit from default
 			wantPipelines: map[string]*VersionPipelineDefinition{
@@ -3456,31 +3402,26 @@ func TestValidatePipelines(t *testing.T) {
 		},
 		{
 			name: "should merge default pipeline with version-specific pipeline",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					DefaultBuildPipeline: compapiv1alpha1.ComponentBuildPipeline{
-						Pull: compapiv1alpha1.PipelineDefinition{
-							PipelineRefName: "default-pull",
-						},
-					},
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{
-									Name:     "v1",
-									Revision: "main",
-									BuildPipeline: compapiv1alpha1.ComponentBuildPipeline{
-										Push: compapiv1alpha1.PipelineDefinition{
-											PipelineRefName: "custom-push",
-										},
-									},
-								},
-								{Name: "v2", Revision: "develop"},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{
+						Name:     "v1",
+						Revision: "main",
+						BuildPipeline: compapiv1alpha1.ComponentBuildPipeline{
+							Push: compapiv1alpha1.PipelineDefinition{
+								PipelineRefName: "custom-push",
 							},
 						},
 					},
+					{Name: "v2", Revision: "develop"},
 				},
-			},
+				defaultPipeline: compapiv1alpha1.ComponentBuildPipeline{
+					Pull: compapiv1alpha1.PipelineDefinition{
+						PipelineRefName: "default-pull",
+					},
+				},
+			}),
 			wantErrors:        0,
 			wantPipelineCount: 2,
 			wantPipelines: map[string]*VersionPipelineDefinition{
@@ -3496,49 +3437,44 @@ func TestValidatePipelines(t *testing.T) {
 		},
 		{
 			name: "should handle default PullAndPush with version-specific Pull, Push, and PullAndPush",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					DefaultBuildPipeline: compapiv1alpha1.ComponentBuildPipeline{
-						PullAndPush: compapiv1alpha1.PipelineDefinition{
-							PipelineRefName: "default-pullandpush",
-						},
-					},
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{
-									Name:     "v1",
-									Revision: "main",
-									BuildPipeline: compapiv1alpha1.ComponentBuildPipeline{
-										Pull: compapiv1alpha1.PipelineDefinition{
-											PipelineRefName: "custom-pull",
-										},
-									},
-								},
-								{
-									Name:     "v2",
-									Revision: "develop",
-									BuildPipeline: compapiv1alpha1.ComponentBuildPipeline{
-										Push: compapiv1alpha1.PipelineDefinition{
-											PipelineRefName: "custom-push",
-										},
-									},
-								},
-								{
-									Name:     "v3",
-									Revision: "release",
-									BuildPipeline: compapiv1alpha1.ComponentBuildPipeline{
-										PullAndPush: compapiv1alpha1.PipelineDefinition{
-											PipelineRefName: "custom-pullandpush",
-										},
-									},
-								},
-								{Name: "v4", Revision: "staging"},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{
+						Name:     "v1",
+						Revision: "main",
+						BuildPipeline: compapiv1alpha1.ComponentBuildPipeline{
+							Pull: compapiv1alpha1.PipelineDefinition{
+								PipelineRefName: "custom-pull",
 							},
 						},
 					},
+					{
+						Name:     "v2",
+						Revision: "develop",
+						BuildPipeline: compapiv1alpha1.ComponentBuildPipeline{
+							Push: compapiv1alpha1.PipelineDefinition{
+								PipelineRefName: "custom-push",
+							},
+						},
+					},
+					{
+						Name:     "v3",
+						Revision: "release",
+						BuildPipeline: compapiv1alpha1.ComponentBuildPipeline{
+							PullAndPush: compapiv1alpha1.PipelineDefinition{
+								PipelineRefName: "custom-pullandpush",
+							},
+						},
+					},
+					{Name: "v4", Revision: "staging"},
 				},
-			},
+				defaultPipeline: compapiv1alpha1.ComponentBuildPipeline{
+					PullAndPush: compapiv1alpha1.PipelineDefinition{
+						PipelineRefName: "default-pullandpush",
+					},
+				},
+			}),
 			wantErrors:        0,
 			wantPipelineCount: 4,
 			wantPipelines: map[string]*VersionPipelineDefinition{
@@ -3562,52 +3498,42 @@ func TestValidatePipelines(t *testing.T) {
 		},
 		{
 			name: "should detect validation errors in default pipeline",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					DefaultBuildPipeline: compapiv1alpha1.ComponentBuildPipeline{
-						PullAndPush: compapiv1alpha1.PipelineDefinition{
-							PipelineRefName: "docker-build",
-						},
-						Pull: compapiv1alpha1.PipelineDefinition{
-							PipelineRefName: "docker-build",
-						},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "v1", Revision: "main"},
+				},
+				defaultPipeline: compapiv1alpha1.ComponentBuildPipeline{
+					PullAndPush: compapiv1alpha1.PipelineDefinition{
+						PipelineRefName: "docker-build",
 					},
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{Name: "v1", Revision: "main"},
-							},
-						},
+					Pull: compapiv1alpha1.PipelineDefinition{
+						PipelineRefName: "docker-build",
 					},
 				},
-			},
+			}),
 			wantErrors:  1,
 			errorSubstr: "cannot specify pull-and-push together with pull or push",
 		},
 		{
 			name: "should detect validation errors in version-specific pipeline",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{
-									Name:     "v1",
-									Revision: "main",
-									BuildPipeline: compapiv1alpha1.ComponentBuildPipeline{
-										Pull: compapiv1alpha1.PipelineDefinition{
-											PipelineRefGit: compapiv1alpha1.PipelineRefGit{
-												Url: "https://github.com/test/repo",
-												// Missing required fields
-											},
-										},
-									},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{
+						Name:     "v1",
+						Revision: "main",
+						BuildPipeline: compapiv1alpha1.ComponentBuildPipeline{
+							Pull: compapiv1alpha1.PipelineDefinition{
+								PipelineRefGit: compapiv1alpha1.PipelineRefGit{
+									Url: "https://github.com/test/repo",
+									// Missing required fields
 								},
 							},
 						},
 					},
 				},
-			},
+			}),
 			wantErrors:  2, // missing pathInRepo and revision
 			errorSubstr: "is required",
 		},
@@ -3639,8 +3565,7 @@ func TestValidatePipelines(t *testing.T) {
 							assert.Assert(t, gotPipeline.Pull == nil, "version %s Pull should be nil", versionName)
 						} else {
 							assert.Assert(t, gotPipeline.Pull != nil, "version %s Pull should not be nil", versionName)
-							assert.Equal(t, wantPipeline.Pull.PipelineRefName, gotPipeline.Pull.PipelineRefName,
-								"version %s Pull pipeline mismatch", versionName)
+							assert.Equal(t, wantPipeline.Pull.PipelineRefName, gotPipeline.Pull.PipelineRefName, "version %s Pull pipeline mismatch", versionName)
 						}
 
 						// Compare Push pipeline
@@ -3648,8 +3573,7 @@ func TestValidatePipelines(t *testing.T) {
 							assert.Assert(t, gotPipeline.Push == nil, "version %s Push should be nil", versionName)
 						} else {
 							assert.Assert(t, gotPipeline.Push != nil, "version %s Push should not be nil", versionName)
-							assert.Equal(t, wantPipeline.Push.PipelineRefName, gotPipeline.Push.PipelineRefName,
-								"version %s Push pipeline mismatch", versionName)
+							assert.Equal(t, wantPipeline.Push.PipelineRefName, gotPipeline.Push.PipelineRefName, "version %s Push pipeline mismatch", versionName)
 						}
 					}
 				}
@@ -3672,39 +3596,41 @@ func TestDetermineVersionsToCreateConfiguration(t *testing.T) {
 	}{
 		{
 			name: "should return all versions with AllVersions flag",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Actions: compapiv1alpha1.ComponentActions{
-						CreateConfiguration: compapiv1alpha1.ComponentCreatePipelineConfiguration{
-							AllVersions: true,
-						},
-					},
-				},
-			},
+			component: getComponentData(componentConfig{
+				componentKey:             types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				forceEmptyUrlAndVersions: true,
+				actions:                  compapiv1alpha1.ComponentActions{CreateConfiguration: compapiv1alpha1.ComponentCreatePipelineConfiguration{AllVersions: true}},
+			}),
 			wantVersionsToCreatePRFor:        []string{"v1", "v2"},
 			wantInvalidVersionsToCreatePRFor: []string{},
 		},
 		{
+			name: "should return version from version",
+			component: getComponentData(componentConfig{
+				componentKey:             types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				forceEmptyUrlAndVersions: true,
+				actions:                  compapiv1alpha1.ComponentActions{CreateConfiguration: compapiv1alpha1.ComponentCreatePipelineConfiguration{Version: "v1"}},
+			}),
+			wantVersionsToCreatePRFor:        []string{"v1"},
+			wantInvalidVersionsToCreatePRFor: []string{},
+		},
+		{
 			name: "should filter invalid versions",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Actions: compapiv1alpha1.ComponentActions{
-						CreateConfiguration: compapiv1alpha1.ComponentCreatePipelineConfiguration{
-							Versions: []string{"v1", "v3"},
-						},
-					},
-				},
-			},
+			component: getComponentData(componentConfig{
+				componentKey:             types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				forceEmptyUrlAndVersions: true,
+				actions:                  compapiv1alpha1.ComponentActions{CreateConfiguration: compapiv1alpha1.ComponentCreatePipelineConfiguration{Versions: []string{"v1", "v3"}}},
+			}),
 			wantVersionsToCreatePRFor:        []string{"v1"},
 			wantInvalidVersionsToCreatePRFor: []string{"v3"},
 		},
 		{
 			name: "should return empty when no action specified",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Actions: compapiv1alpha1.ComponentActions{},
-				},
-			},
+			component: getComponentData(componentConfig{
+				componentKey:             types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				forceEmptyUrlAndVersions: true,
+				actions:                  compapiv1alpha1.ComponentActions{CreateConfiguration: compapiv1alpha1.ComponentCreatePipelineConfiguration{}},
+			}),
 			wantVersionsToCreatePRFor:        []string{},
 			wantInvalidVersionsToCreatePRFor: []string{},
 		},
@@ -3732,107 +3658,61 @@ func TestDetermineVersionsToOnboardAndOffboard(t *testing.T) {
 	tests := []struct {
 		name                   string
 		component              *compapiv1alpha1.Component
-		existingSpecVersions   map[string]*VersionInfo
 		wantVersionsToOnboard  []string
 		wantVersionsToOffboard []string
 	}{
 		{
 			name: "should identify versions to onboard",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{Name: "v1", Revision: "main"},
-								{Name: "v2", Revision: "develop"},
-							},
-						},
-					},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "v1", Revision: "main"},
+					{Name: "v2", Revision: "develop"},
 				},
-				Status: compapiv1alpha1.ComponentStatus{
-					Versions: []compapiv1alpha1.ComponentVersionStatus{
-						{Name: "v1", Revision: "main"},
-					},
-				},
-			},
-			existingSpecVersions: map[string]*VersionInfo{
-				"v1": {OriginalVersion: "v1", SanitizedVersion: "v1", Revision: "main"},
-				"v2": {OriginalVersion: "v2", SanitizedVersion: "v2", Revision: "develop"},
-			},
+				status: compapiv1alpha1.ComponentStatus{Versions: []compapiv1alpha1.ComponentVersionStatus{{Name: "v1", Revision: "main"}}},
+			}),
 			wantVersionsToOnboard:  []string{"v2"},
 			wantVersionsToOffboard: []string{},
 		},
 		{
 			name: "should identify all versions to onboard when status is empty",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{Name: "v1", Revision: "main"},
-								{Name: "v2", Revision: "develop"},
-							},
-						},
-					},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "v1", Revision: "main"},
+					{Name: "v2", Revision: "develop"},
 				},
-				Status: compapiv1alpha1.ComponentStatus{},
-			},
-			existingSpecVersions: map[string]*VersionInfo{
-				"v1": {OriginalVersion: "v1", SanitizedVersion: "v1", Revision: "main"},
-				"v2": {OriginalVersion: "v2", SanitizedVersion: "v2", Revision: "develop"},
-			},
+				status: compapiv1alpha1.ComponentStatus{Versions: []compapiv1alpha1.ComponentVersionStatus{}},
+			}),
 			wantVersionsToOnboard:  []string{"v1", "v2"},
 			wantVersionsToOffboard: []string{},
 		},
 		{
 			name: "should identify versions to offboard",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{Name: "v1", Revision: "main"},
-							},
-						},
-					},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "v1", Revision: "main"},
 				},
-				Status: compapiv1alpha1.ComponentStatus{
-					Versions: []compapiv1alpha1.ComponentVersionStatus{
-						{Name: "v1", Revision: "main"},
-						{Name: "v2", Revision: "develop"},
-					},
-				},
-			},
-			existingSpecVersions: map[string]*VersionInfo{
-				"v1": {OriginalVersion: "v1", SanitizedVersion: "v1", Revision: "main"},
-			},
+				status: compapiv1alpha1.ComponentStatus{Versions: []compapiv1alpha1.ComponentVersionStatus{
+					{Name: "v1", Revision: "main"},
+					{Name: "v2", Revision: "develop"}}},
+			}),
 			wantVersionsToOnboard:  []string{},
 			wantVersionsToOffboard: []string{"v2"},
 		},
 		{
 			name: "should identify both versions to onboard and offboard simultaneously",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Source: compapiv1alpha1.ComponentSource{
-						ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-							Versions: []compapiv1alpha1.ComponentVersion{
-								{Name: "v1", Revision: "main"},
-								{Name: "v3", Revision: "feature"},
-							},
-						},
-					},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "v1", Revision: "main"},
+					{Name: "v3", Revision: "feature"},
 				},
-				Status: compapiv1alpha1.ComponentStatus{
-					Versions: []compapiv1alpha1.ComponentVersionStatus{
-						{Name: "v1", Revision: "main"},
-						{Name: "v2", Revision: "develop"},
-					},
-				},
-			},
-			existingSpecVersions: map[string]*VersionInfo{
-				"v1": {OriginalVersion: "v1", SanitizedVersion: "v1", Revision: "main"},
-				"v3": {OriginalVersion: "v3", SanitizedVersion: "v3", Revision: "feature"},
-			},
+				status: compapiv1alpha1.ComponentStatus{Versions: []compapiv1alpha1.ComponentVersionStatus{
+					{Name: "v1", Revision: "main"},
+					{Name: "v2", Revision: "develop"}}},
+			}),
 			wantVersionsToOnboard:  []string{"v3"},
 			wantVersionsToOffboard: []string{"v2"},
 		},
@@ -3841,8 +3721,9 @@ func TestDetermineVersionsToOnboardAndOffboard(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reconciler := &ComponentBuildReconciler{}
+			existingSpecVersions := buildVersionInfoMap(tt.component, false)
 			versionsToOnboard, versionsToOffboard := reconciler.determineVersionsToOnboardAndOffboard(
-				context.TODO(), tt.component, tt.existingSpecVersions,
+				context.TODO(), tt.component, existingSpecVersions,
 			)
 
 			assert.Equal(t, len(tt.wantVersionsToOnboard), len(versionsToOnboard), "versions to onboard count mismatch")
@@ -3876,13 +3757,10 @@ func TestDetermineVersionsToTriggerBuild(t *testing.T) {
 	}{
 		{
 			name: "should filter out versions being onboarded",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Actions: compapiv1alpha1.ComponentActions{
-						TriggerBuilds: []string{"v1", "v2"},
-					},
-				},
-			},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				actions:      compapiv1alpha1.ComponentActions{TriggerBuilds: []string{"v1", "v2"}},
+			}),
 			versionsToOnboard:                    []string{"v1"},
 			versionsToCreatePRFor:                []string{},
 			wantVersionsToTriggerBuildFor:        []string{"v2"},
@@ -3890,13 +3768,10 @@ func TestDetermineVersionsToTriggerBuild(t *testing.T) {
 		},
 		{
 			name: "should filter out versions being created with configuration",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Actions: compapiv1alpha1.ComponentActions{
-						TriggerBuilds: []string{"v1", "v2"},
-					},
-				},
-			},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				actions:      compapiv1alpha1.ComponentActions{TriggerBuilds: []string{"v1", "v2"}},
+			}),
 			versionsToOnboard:                    []string{},
 			versionsToCreatePRFor:                []string{"v2"},
 			wantVersionsToTriggerBuildFor:        []string{"v1"},
@@ -3904,13 +3779,10 @@ func TestDetermineVersionsToTriggerBuild(t *testing.T) {
 		},
 		{
 			name: "should filter out invalid versions",
-			component: &compapiv1alpha1.Component{
-				Spec: compapiv1alpha1.ComponentSpec{
-					Actions: compapiv1alpha1.ComponentActions{
-						TriggerBuilds: []string{"v1", "v3"},
-					},
-				},
-			},
+			component: getComponentData(componentConfig{
+				componentKey: types.NamespacedName{Namespace: "workspace-name", Name: "testcomponent"},
+				actions:      compapiv1alpha1.ComponentActions{TriggerBuilds: []string{"v1", "v3"}},
+			}),
 			versionsToOnboard:                    []string{},
 			versionsToCreatePRFor:                []string{},
 			wantVersionsToTriggerBuildFor:        []string{"v1"},

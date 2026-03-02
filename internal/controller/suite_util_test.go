@@ -81,16 +81,19 @@ var (
 )
 
 type componentConfig struct {
-	componentKey       types.NamespacedName
-	containerImage     string
-	versions           []compapiv1alpha1.ComponentVersion
-	gitURL             string
-	annotations        map[string]string
-	finalizers         []string
-	actions            compapiv1alpha1.ComponentActions
-	repositorySettings compapiv1alpha1.RepositorySettings
-	defaultPipeline    compapiv1alpha1.ComponentBuildPipeline
-	skipOffboardingPr  bool
+	componentKey             types.NamespacedName
+	containerImage           string
+	versions                 []compapiv1alpha1.ComponentVersion
+	gitURL                   string
+	annotations              map[string]string
+	finalizers               []string
+	actions                  compapiv1alpha1.ComponentActions
+	repositorySettings       compapiv1alpha1.RepositorySettings
+	defaultPipeline          compapiv1alpha1.ComponentBuildPipeline
+	skipOffboardingPr        bool
+	forceEmptyUrlAndVersions bool
+	dockerfileURI            string
+	status                   compapiv1alpha1.ComponentStatus
 }
 
 // TODO remove after only new model is used
@@ -119,12 +122,12 @@ func getComponentData(config componentConfig) *compapiv1alpha1.Component {
 		image = ComponentContainerImage
 	}
 	gitUrl := config.gitURL
-	if gitUrl == "" {
+	if gitUrl == "" && !config.forceEmptyUrlAndVersions {
 		gitUrl = SampleRepoLink + "-" + name
 	}
 	versions := config.versions
 	// Only add default version if versions is nil (not set), not if it's explicitly empty []
-	if versions == nil {
+	if versions == nil && !config.forceEmptyUrlAndVersions {
 		versions = []compapiv1alpha1.ComponentVersion{
 			{Name: DefaultVersionName, Revision: DefaultRevisionName, Context: ""},
 		}
@@ -160,11 +163,13 @@ func getComponentData(config componentConfig) *compapiv1alpha1.Component {
 			SkipOffboardingPr:    config.skipOffboardingPr,
 			Source: compapiv1alpha1.ComponentSource{
 				ComponentSourceUnion: compapiv1alpha1.ComponentSourceUnion{
-					GitURL:   gitUrl,
-					Versions: versions,
+					GitURL:        gitUrl,
+					Versions:      versions,
+					DockerfileURI: config.dockerfileURI,
 				},
 			},
 		},
+		Status: config.status,
 	}
 }
 
