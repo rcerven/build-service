@@ -153,7 +153,7 @@ var _ = Describe("Component PipelineRuns pruner controller", func() {
 		var (
 			// All related to the component resources have the same key (but different type)
 			namespace         = "pipelines-pruner"
-			resourcePrunerKey = types.NamespacedName{Name: HASCompName + "-pruner", Namespace: namespace}
+			resourcePrunerKey = types.NamespacedName{Name: DefaultCompName + "-pruner", Namespace: namespace}
 		)
 
 		_ = BeforeEach(func() {

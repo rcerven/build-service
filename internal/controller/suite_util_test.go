@@ -59,9 +59,14 @@ const (
 )
 
 const (
-	HASAppName              = "test-application"
-	HASCompName             = "test-component"
+	// TODO remove after only new model is used
+	HASAppName = "test-application"
+	// TODO remove after only new model is used
+	HASCompName = "test-component"
+	// TODO remove after only new model is used
 	HASAppNamespace         = "default"
+	DefaultCompName         = "test-component"
+	DefaultCompNamespace    = "default"
 	SampleRepoLink          = "https://github.com/devfile-samples/devfile-sample-java-springboot-basic"
 	ComponentContainerImage = "registry.io/username/image:tag"
 	SelectorDefaultName     = "default"
@@ -111,11 +116,11 @@ type componentConfigOldModel struct {
 func getComponentData(config componentConfig) *compapiv1alpha1.Component {
 	name := config.componentKey.Name
 	if name == "" {
-		name = HASCompName
+		name = DefaultCompName
 	}
 	namespace := config.componentKey.Namespace
 	if namespace == "" {
-		namespace = HASAppNamespace
+		namespace = DefaultCompNamespace
 	}
 	image := config.containerImage
 	if image == "" {
@@ -916,6 +921,53 @@ func waitComponentAnnotationExists(componentKey types.NamespacedName, annotation
 		_, exists := annotations[annotationName]
 		return exists
 	}, timeout, interval).Should(BeTrue())
+}
+
+func waitForComponentStatusVersions(componentKey types.NamespacedName, expectedCount int) *compapiv1alpha1.Component {
+	var component *compapiv1alpha1.Component
+	Eventually(func() bool {
+		component = getComponent(componentKey)
+		return len(component.Status.Versions) == expectedCount
+	}, timeout, interval).Should(BeTrue())
+	return component
+}
+
+func waitForComponentStatusMessage(componentKey types.NamespacedName, shouldBeEmpty bool) *compapiv1alpha1.Component {
+	var component *compapiv1alpha1.Component
+	Eventually(func() bool {
+		component = getComponent(componentKey)
+		if shouldBeEmpty {
+			return component.Status.Message == ""
+		}
+		return component.Status.Message != ""
+	}, timeout, interval).Should(BeTrue())
+	return component
+}
+
+func waitForComponentSpecActionEmpty(componentKey types.NamespacedName, actionType string, checkType string) *compapiv1alpha1.Component {
+	var component *compapiv1alpha1.Component
+	Eventually(func() bool {
+		component = getComponent(componentKey)
+		if actionType == "create" {
+			switch checkType {
+			case "allversions":
+				return !component.Spec.Actions.CreateConfiguration.AllVersions
+			case "versions":
+				return len(component.Spec.Actions.CreateConfiguration.Versions) == 0
+			case "version":
+				return component.Spec.Actions.CreateConfiguration.Version == ""
+			}
+		} else if actionType == "trigger" {
+			switch checkType {
+			case "builds":
+				return len(component.Spec.Actions.TriggerBuilds) == 0
+			case "build":
+				return component.Spec.Actions.TriggerBuild == ""
+			}
+		}
+		return false
+	}, timeout, interval).Should(BeTrue())
+	return component
 }
 
 func createRoute(routeKey types.NamespacedName, host string) {

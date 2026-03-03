@@ -120,8 +120,7 @@ var _ = Describe("Component build controller new model", func() {
 		})
 
 		It("should create build pipeline dedicated service account and role binding", func() {
-			component := getSampleComponentData(component1Key)
-			createComponent(component)
+			createComponent(getSampleComponentData(component1Key))
 
 			component1SAKey := getComponentServiceAccountKey(component1Key)
 			waitServiceAccount(component1SAKey)
@@ -132,8 +131,7 @@ var _ = Describe("Component build controller new model", func() {
 		})
 
 		It("should create build pipeline dedicated service account for each component and common role binding", func() {
-			component1 := getSampleComponentData(component1Key)
-			createComponent(component1)
+			createComponent(getSampleComponentData(component1Key))
 
 			component1SAKey := getComponentServiceAccountKey(component1Key)
 			waitServiceAccount(component1SAKey)
@@ -142,8 +140,7 @@ var _ = Describe("Component build controller new model", func() {
 			Expect(roleBinding.RoleRef.Name).To(Equal(BuildPipelineClusterRoleName))
 			Expect(roleBinding.Subjects).To(HaveLen(1))
 
-			component2 := getSampleComponentData(component2Key)
-			createComponent(component2)
+			createComponent(getSampleComponentData(component2Key))
 
 			component2SAKey := getComponentServiceAccountKey(component2Key)
 			waitServiceAccount(component2SAKey)
@@ -154,8 +151,7 @@ var _ = Describe("Component build controller new model", func() {
 		})
 
 		It("should remove build pipeline dedicated service account for each component and common role binding when the last service account removed", func() {
-			component1 := getSampleComponentData(component1Key)
-			createComponent(component1)
+			createComponent(getSampleComponentData(component1Key))
 
 			component1SAKey := getComponentServiceAccountKey(component1Key)
 			component1SA := waitServiceAccount(component1SAKey)
@@ -167,8 +163,7 @@ var _ = Describe("Component build controller new model", func() {
 			Expect(roleBinding.RoleRef.Kind).To(Equal("ClusterRole"))
 			Expect(roleBinding.RoleRef.Name).To(Equal(BuildPipelineClusterRoleName))
 
-			component2 := getSampleComponentData(component2Key)
-			createComponent(component2)
+			createComponent(getSampleComponentData(component2Key))
 
 			component2SAKey := getComponentServiceAccountKey(component2Key)
 			component2SA := waitServiceAccount(component2SAKey)
@@ -196,14 +191,10 @@ var _ = Describe("Component build controller new model", func() {
 		})
 
 		It("should restore build pipeline dedicated service account on reconcile", func() {
-			component := getSampleComponentData(component1Key)
-			component = createComponent(component)
+			createComponent(getSampleComponentData(component1Key))
 
 			// Wait for version to appear in status
-			Eventually(func() bool {
-				component = getComponent(component1Key)
-				return len(component.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			waitForComponentStatusVersions(component1Key, 1)
 
 			component1SAKey := getComponentServiceAccountKey(component1Key)
 			waitServiceAccount(component1SAKey)
@@ -221,14 +212,10 @@ var _ = Describe("Component build controller new model", func() {
 		})
 
 		It("should restore build pipelines role binding on reconcile", func() {
-			component1 := getSampleComponentData(component1Key)
-			component1 = createComponent(component1)
+			createComponent(getSampleComponentData(component1Key))
 
 			// Wait for version to appear in status
-			Eventually(func() bool {
-				component1 = getComponent(component1Key)
-				return len(component1.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			waitForComponentStatusVersions(component1Key, 1)
 
 			component1SAKey := getComponentServiceAccountKey(component1Key)
 			waitServiceAccount(component1SAKey)
@@ -237,14 +224,10 @@ var _ = Describe("Component build controller new model", func() {
 			Expect(roleBinding.RoleRef.Name).To(Equal(BuildPipelineClusterRoleName))
 			Expect(roleBinding.Subjects).To(HaveLen(1))
 
-			component2 := getSampleComponentData(component2Key)
-			component2 = createComponent(component2)
+			createComponent(getSampleComponentData(component2Key))
 
 			// Wait for version to appear in status
-			Eventually(func() bool {
-				component2 = getComponent(component2Key)
-				return len(component2.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			waitForComponentStatusVersions(component2Key, 1)
 
 			component2SAKey := getComponentServiceAccountKey(component2Key)
 			waitServiceAccount(component2SAKey)
@@ -324,55 +307,43 @@ var _ = Describe("Component build controller new model", func() {
 		})
 
 		It("should set error status when version name is empty", func() {
-			component := getComponentData(componentConfig{
+			createComponent(getComponentData(componentConfig{
 				componentKey: componentKey,
 				versions: []compapiv1alpha1.ComponentVersion{
 					{Name: "", Revision: "main"},
 				},
-			})
-			component = createComponent(component)
+			}))
 
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return component.Status.Message != ""
-			}, timeout, interval).Should(BeTrue())
+			component := waitForComponentStatusMessage(componentKey, false)
 
 			Expect(component.Status.Message).To(ContainSubstring("validation failed"))
 			Expect(component.Status.Message).To(ContainSubstring("name is required"))
 		})
 
 		It("should set error status when version revision is empty", func() {
-			component := getComponentData(componentConfig{
+			createComponent(getComponentData(componentConfig{
 				componentKey: componentKey,
 				versions: []compapiv1alpha1.ComponentVersion{
 					{Name: "v1.0", Revision: ""},
 				},
-			})
-			component = createComponent(component)
+			}))
 
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return component.Status.Message != ""
-			}, timeout, interval).Should(BeTrue())
+			component := waitForComponentStatusMessage(componentKey, false)
 
 			Expect(component.Status.Message).To(ContainSubstring("validation failed"))
 			Expect(component.Status.Message).To(ContainSubstring("revision is required"))
 		})
 
 		It("should set error status for duplicate sanitized version names", func() {
-			component := getComponentData(componentConfig{
+			createComponent(getComponentData(componentConfig{
 				componentKey: componentKey,
 				versions: []compapiv1alpha1.ComponentVersion{
 					{Name: "v1.0", Revision: "main"},    // becomes "v1-0" after sanitization
 					{Name: "v1_0", Revision: "develop"}, // becomes "v1-0" after sanitization
 				},
-			})
-			component = createComponent(component)
+			}))
 
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return component.Status.Message != ""
-			}, timeout, interval).Should(BeTrue())
+			component := waitForComponentStatusMessage(componentKey, false)
 
 			Expect(component.Status.Message).To(ContainSubstring("validation failed"))
 			Expect(component.Status.Message).To(ContainSubstring("conflicts with version"))
@@ -381,12 +352,9 @@ var _ = Describe("Component build controller new model", func() {
 		It("should set error status when git source URL is missing", func() {
 			component := getSampleComponentData(componentKey)
 			component.Spec.Source.GitURL = ""
-			component = createComponent(component)
+			createComponent(component)
 
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return component.Status.Message != ""
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusMessage(componentKey, false)
 
 			Expect(component.Status.Message).To(ContainSubstring("Nothing to do for component without git source"))
 		})
@@ -394,12 +362,9 @@ var _ = Describe("Component build controller new model", func() {
 		It("should set error status when container image is missing", func() {
 			component := getSampleComponentData(componentKey)
 			component.Spec.ContainerImage = ""
-			component = createComponent(component)
+			createComponent(component)
 
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return component.Status.Message != ""
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusMessage(componentKey, false)
 
 			Expect(component.Status.Message).To(Equal(waitForContainerImageMessage))
 		})
@@ -412,12 +377,9 @@ var _ = Describe("Component build controller new model", func() {
 					{Name: "v1", Revision: "main"},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return component.Status.Message != ""
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusMessage(componentKey, false)
 
 			Expect(component.Status.Message).To(ContainSubstring("Pipelines as Code secret does not exist"))
 		})
@@ -469,12 +431,9 @@ var _ = Describe("Component build controller new model", func() {
 					},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return component.Status.Message != ""
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusMessage(componentKey, false)
 
 			Expect(component.Status.Message).To(ContainSubstring("validation failed"))
 			Expect(component.Status.Message).To(ContainSubstring("cannot specify pull-and-push together with pull or push"))
@@ -500,12 +459,9 @@ var _ = Describe("Component build controller new model", func() {
 					},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return component.Status.Message != ""
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusMessage(componentKey, false)
 
 			Expect(component.Status.Message).To(ContainSubstring("validation failed"))
 			Expect(component.Status.Message).To(ContainSubstring("pathInRepo is required"))
@@ -546,14 +502,10 @@ var _ = Describe("Component build controller new model", func() {
 		})
 
 		It("should set custom params in Repository CR when namespace has workspace label", func() {
-			component := getSampleComponentData(componentKey)
-			component = createComponent(component)
+			createComponent(getSampleComponentData(componentKey))
 
 			// Wait for version to appear in status
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			component := waitForComponentStatusVersions(componentKey, 1)
 
 			// Verify Repository CR has custom params
 			expectedRepoName, err := generatePaCRepositoryNameFromGitUrl(component.Spec.Source.GitURL)
@@ -608,13 +560,10 @@ var _ = Describe("Component build controller new model", func() {
 					GithubAppTokenScopeRepos: []string{"owner/repo1", "owner/repo2"},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for initial onboarding (version in status means reconcile finished)
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 1)
 
 			// Verify component status fields
 			verifyComponentVersionStatus(component.Status.Versions[0], version1Name, "main", "succeeded", "", "")
@@ -671,13 +620,10 @@ var _ = Describe("Component build controller new model", func() {
 					GithubAppTokenScopeRepos: []string{"owner/repo1", "owner/repo2"},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for initial onboarding
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 1)
 
 			// Verify initial status
 			Expect(component.Status.RepositorySettings.GithubAppTokenScopeRepos).To(Equal([]string{"owner/repo1", "owner/repo2"}))
@@ -735,13 +681,10 @@ var _ = Describe("Component build controller new model", func() {
 					},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for action to be completely cleared (invalid version removed and valid version processed)
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Spec.Actions.CreateConfiguration.Versions) == 0
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentSpecActionEmpty(componentKey, "create", "versions")
 
 			// Verify v1 is onboarded in status
 			Expect(len(component.Status.Versions)).To(Equal(1))
@@ -758,23 +701,17 @@ var _ = Describe("Component build controller new model", func() {
 					{Name: version1Name, Revision: "main"},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for v1 to be onboarded
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 1)
 
 			// Now add trigger build action with invalid version
 			component.Spec.Actions.TriggerBuilds = []string{version1Name, "nonexistent"}
 			Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
 			// Wait for action to be completely cleared (invalid version removed and valid version triggered)
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Spec.Actions.TriggerBuilds) == 0
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentSpecActionEmpty(componentKey, "trigger", "builds")
 
 			// Verify v1 is still onboarded in status
 			Expect(len(component.Status.Versions)).To(Equal(1))
@@ -828,13 +765,10 @@ var _ = Describe("Component build controller new model", func() {
 					{Name: "v2", Revision: "develop"},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for versions to appear in status
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 2
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 2)
 
 			// Verify both versions are onboarded with correct status fields
 			versionMap := make(map[string]compapiv1alpha1.ComponentVersionStatus)
@@ -873,13 +807,10 @@ var _ = Describe("Component build controller new model", func() {
 					{Name: "v1", Revision: "main"},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for v1 to be onboarded
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 1)
 
 			// Add v2
 			component.Spec.Source.Versions = append(component.Spec.Source.Versions,
@@ -887,10 +818,7 @@ var _ = Describe("Component build controller new model", func() {
 			Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
 			// Wait for v2 to be onboarded
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 2
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 2)
 
 			// Verify both versions are in status with correct status fields
 			versionMap := make(map[string]compapiv1alpha1.ComponentVersionStatus)
@@ -932,13 +860,10 @@ var _ = Describe("Component build controller new model", func() {
 					{Name: version2Name, Revision: "develop"},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for both to be onboarded
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 2
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 2)
 
 			// Remove v2
 			component.Spec.Source.Versions = []compapiv1alpha1.ComponentVersion{
@@ -947,10 +872,7 @@ var _ = Describe("Component build controller new model", func() {
 			Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
 			// Wait for v2 to be removed from status
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 1)
 
 			// Verify only v1 remains with all correct status fields
 			verifyComponentVersionStatus(component.Status.Versions[0], version1Name, "main", "succeeded", "", "")
@@ -1000,7 +922,7 @@ var _ = Describe("Component build controller new model", func() {
 					{Name: version1Name, Revision: "main"},
 				},
 			})
-			component1 = createComponent(component1)
+			createComponent(component1)
 
 			// Wait for first component to be onboarded
 			Eventually(func() bool {
@@ -1025,7 +947,7 @@ var _ = Describe("Component build controller new model", func() {
 					{Name: version1Name, Revision: "main"},
 				},
 			})
-			component2 = createComponent(component2)
+			createComponent(component2)
 
 			// Wait for second component to be onboarded
 			Eventually(func() bool {
@@ -1103,15 +1025,10 @@ var _ = Describe("Component build controller new model", func() {
 					{Name: "v1.0-beta+build.123", Revision: "main"},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Version should be onboarded (after sanitization)
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) > 0
-			}, timeout, interval).Should(BeTrue())
-
-			Expect(component.Status.Versions).To(HaveLen(1))
+			component = waitForComponentStatusVersions(componentKey, 1)
 			// Original name should be preserved in status
 			verifyComponentVersionStatus(component.Status.Versions[0], "v1.0-beta+build.123", "main", "succeeded", "", "")
 
@@ -1144,10 +1061,7 @@ var _ = Describe("Component build controller new model", func() {
 			Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
 			// CreateConfiguration should be cleared after processing
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return component.Spec.Actions.CreateConfiguration.Version == ""
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentSpecActionEmpty(componentKey, "create", "version")
 
 			// Status should now reflect the new revision
 			component = getComponent(componentKey)
@@ -1169,23 +1083,17 @@ var _ = Describe("Component build controller new model", func() {
 					{Name: "", Revision: "main"},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for error to be set
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return component.Status.Message != ""
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusMessage(componentKey, false)
 
 			// Fix the spec
 			component.Spec.Source.Versions[0].Name = "v1"
 			Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
 			// Error should be cleared
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return component.Status.Message == ""
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusMessage(componentKey, true)
 
 			// Version should be onboarded
 			Expect(component.Status.Versions).To(HaveLen(1))
@@ -1196,6 +1104,31 @@ var _ = Describe("Component build controller new model", func() {
 
 			// Verify Repository CR was created with correct URL and no GitProvider (GitHub App)
 			validatePaCRepository(component, "", "")
+		})
+
+		It("should set permanent error when PAC secret is missing", func() {
+			// Delete the PAC secret to simulate missing configuration
+			deleteSecret(pacSecretKey)
+
+			// Create component with one version
+			component := getComponentData(componentConfig{
+				componentKey: componentKey,
+				versions: []compapiv1alpha1.ComponentVersion{
+					{Name: "v1", Revision: "main"},
+				},
+			})
+			createComponent(component)
+
+			// Wait for permanent error to be set in status.message
+			component = waitForComponentStatusMessage(componentKey, false)
+
+			// Verify the error message contains information about PAC secret not found
+			Expect(component.Status.Message).To(ContainSubstring("Pipelines as Code secret does not exist"))
+
+			// Verify version is not onboarded (no status.Versions entries)
+			Expect(component.Status.Versions).To(HaveLen(0))
+
+			deleteComponent(componentKey)
 		})
 	})
 
@@ -1239,13 +1172,10 @@ var _ = Describe("Component build controller new model", func() {
 				},
 				skipOffboardingPr: true,
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for both versions to be onboarded
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 2
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 2)
 
 			// Remove v2 from spec
 			component.Spec.Source.Versions = []compapiv1alpha1.ComponentVersion{
@@ -1320,13 +1250,10 @@ var _ = Describe("Component build controller new model", func() {
 				},
 				// skipOffboardingPr is false by default
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for both versions to be onboarded
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 2
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 2)
 
 			// Remove v2 from spec (trigger offboarding with purge PR)
 			component.Spec.Source.Versions = []compapiv1alpha1.ComponentVersion{
@@ -1365,15 +1292,15 @@ var _ = Describe("Component build controller new model", func() {
 			version2Name := "v2" // will be removed and offboard successfully
 			version3Name := "v3" // will be removed but fail offboarding
 
-			v2Created := false
-			v3Attempted := false
+			v2PurgePRCreated := false
+			v3PurgePRAttempted := false
 			UndoPaCMergeRequestFunc = func(repoUrl string, d *gp.MergeRequestData) (webUrl string, err error) {
 				defer GinkgoRecover()
 
 				// Determine which version this is for based on branch name
 				if strings.Contains(d.BranchName, version2Name) {
-					// b-version succeeds
-					v2Created = true
+					// v2 version succeeds
+					v2PurgePRCreated = true
 					expectedGitURL := SampleRepoLink + "-" + componentKey.Name
 					Expect(repoUrl).To(Equal(expectedGitURL))
 					Expect(d.CommitMessage).ToNot(BeEmpty())
@@ -1381,11 +1308,11 @@ var _ = Describe("Component build controller new model", func() {
 					Expect(len(d.Files)).To(Equal(2), "Should delete both pull and push pipeline files")
 					return UndoPacMergeRequestURL, nil
 				} else if strings.Contains(d.BranchName, version3Name) {
-					// z-version fails with insufficient scope error
-					v3Attempted = true
+					// v3 version fails with insufficient scope error
+					v3PurgePRAttempted = true
 					return "", boerrors.NewBuildOpError(boerrors.EGitLabTokenInsufficientScope, fmt.Errorf("403 Forbidden"))
 				} else if strings.Contains(d.BranchName, version1Name) {
-					// a-version can be called during AfterEach cleanup, just succeed
+					// v1 version can be called during AfterEach cleanup, just succeed
 					return UndoPacMergeRequestURL, nil
 				}
 
@@ -1402,13 +1329,10 @@ var _ = Describe("Component build controller new model", func() {
 					{Name: version3Name, Revision: "branch-v3"},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for all three versions to be onboarded
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 3
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 3)
 
 			// Remove v2 and v3 versions from spec (trigger offboarding for both)
 			component.Spec.Source.Versions = []compapiv1alpha1.ComponentVersion{
@@ -1416,17 +1340,17 @@ var _ = Describe("Component build controller new model", func() {
 			}
 			Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
-			// Wait for both offboarding attempts and b-version to be removed from status
+			// Wait for both offboarding attempts and v2 version to be removed from status
 			Eventually(func() bool {
 				component = getComponent(componentKey)
-				if !v2Created || !v3Attempted {
+				if !v2PurgePRCreated || !v3PurgePRAttempted {
 					return false
 				}
-				// Should have 2 versions: a-version (still in spec) and z-version (failed offboarding)
+				// Should have 2 versions: v1 version (still in spec) and v3 version (failed offboarding)
 				if len(component.Status.Versions) != 2 {
 					return false
 				}
-				// Check if z-version has error message set
+				// Check if v3 version has error message set
 				for _, v := range component.Status.Versions {
 					if v.Name == version3Name && v.Message != "" {
 						return true
@@ -1435,8 +1359,8 @@ var _ = Describe("Component build controller new model", func() {
 				return false
 			}, timeout, interval).Should(BeTrue())
 
-			Expect(v2Created).To(BeTrue(), "v2 version offboarding should have been attempted")
-			Expect(v3Attempted).To(BeTrue(), "v3 version offboarding should have been attempted")
+			Expect(v2PurgePRCreated).To(BeTrue(), "v2 version offboarding should have been attempted")
+			Expect(v3PurgePRAttempted).To(BeTrue(), "v3 version offboarding should have been attempted")
 
 			// Verify version states
 			versionMap := make(map[string]compapiv1alpha1.ComponentVersionStatus)
@@ -2192,13 +2116,10 @@ spec:
 					{Name: version2Name, Revision: "develop"},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for versions to be onboarded
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 2
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 2)
 
 			// Get repository name for verification
 			repositoryName, err := generatePaCRepositoryNameFromGitUrl(component.Spec.Source.GitURL)
@@ -2218,10 +2139,7 @@ spec:
 			secretValue := string(incomingSecret.Data[pacIncomingSecretKey])
 
 			// TriggerBuilds action should be removed after successful trigger
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Spec.Actions.TriggerBuilds) == 0
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentSpecActionEmpty(componentKey, "trigger", "builds")
 
 			// Verify HTTP POST requests were made
 			Eventually(func() int {
@@ -2286,13 +2204,10 @@ spec:
 					{Name: version1Name, Revision: "main"},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for version to be onboarded
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 1)
 
 			// Get repository name for verification
 			repositoryName, err := generatePaCRepositoryNameFromGitUrl(component.Spec.Source.GitURL)
@@ -2312,10 +2227,7 @@ spec:
 			secretValue := string(incomingSecret.Data[pacIncomingSecretKey])
 
 			// TriggerBuild action should be removed after successful trigger
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return component.Spec.Actions.TriggerBuild == ""
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentSpecActionEmpty(componentKey, "trigger", "build")
 
 			// Verify HTTP POST request was made
 			Eventually(func() bool {
@@ -2366,13 +2278,10 @@ spec:
 					{Name: version3Name, Revision: "feature-branch"},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for onboarding
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 3
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 3)
 
 			// Get repository name for verification
 			repositoryName, err := generatePaCRepositoryNameFromGitUrl(component.Spec.Source.GitURL)
@@ -2392,10 +2301,7 @@ spec:
 			secretValue := string(incomingSecret.Data[pacIncomingSecretKey])
 
 			// All triggers should be processed
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Spec.Actions.TriggerBuilds) == 0
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentSpecActionEmpty(componentKey, "trigger", "builds")
 
 			// Verify HTTP POST requests were made for all 3 versions
 			Eventually(func() int {
@@ -2487,23 +2393,17 @@ spec:
 					{Name: version2Name, Revision: "develop"},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for versions to be onboarded
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 2
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 2)
 
 			// Trigger builds for both versions
 			component.Spec.Actions.TriggerBuilds = []string{version1Name, version2Name}
 			Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
 			// Wait for all actions to be cleared (v1 succeeds, v2 fails then retries successfully)
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Spec.Actions.TriggerBuilds) == 0
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentSpecActionEmpty(componentKey, "trigger", "builds")
 
 			// Verify v2 POST succeeded on second attempt (3 total: v1, v2 failed, v2 success)
 			Eventually(func() int {
@@ -2624,13 +2524,10 @@ spec:
 					{Name: version1Name, Revision: "main"},
 				},
 			})
-			component1 = createComponent(component1)
+			createComponent(component1)
 
 			// Wait for onboarding
-			Eventually(func() bool {
-				component1 = getComponent(component1Key)
-				return len(component1.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			component1 = waitForComponentStatusVersions(component1Key, 1)
 
 			// Verify SetupPaCWebhook was called once for first component
 			Expect(webhookSetupCount).To(Equal(1), "SetupPaCWebhook should be called once for first component")
@@ -2654,13 +2551,10 @@ spec:
 					{Name: version1Name, Revision: "develop"},
 				},
 			})
-			component2 = createComponent(component2)
+			createComponent(component2)
 
 			// Both components should be onboarded successfully (reusing webhook)
-			Eventually(func() bool {
-				component2 = getComponent(component2Key)
-				return len(component2.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			waitForComponentStatusVersions(component2Key, 1)
 
 			// Verify webhook secret still has only one key (shared between components)
 			Expect(k8sClient.Get(ctx, webhookSecretKey, webhookSecret)).To(Succeed())
@@ -2702,13 +2596,10 @@ spec:
 					{Name: version1Name, Revision: "main"},
 				},
 			})
-			component1 = createComponent(component1)
+			createComponent(component1)
 
 			// Wait for onboarding
-			Eventually(func() bool {
-				component1 = getComponent(component1Key)
-				return len(component1.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			component1 = waitForComponentStatusVersions(component1Key, 1)
 
 			// Verify SetupPaCWebhook was called once for first component
 			Expect(webhookSetupCount).To(Equal(1), "SetupPaCWebhook should be called once for first component")
@@ -2732,13 +2623,10 @@ spec:
 					{Name: version1Name, Revision: "main"},
 				},
 			})
-			component2 = createComponent(component2)
+			createComponent(component2)
 
 			// Both should be onboarded successfully with different webhooks
-			Eventually(func() bool {
-				component2 = getComponent(component2Key)
-				return len(component2.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			component2 = waitForComponentStatusVersions(component2Key, 1)
 
 			// Verify webhook secret now has two different keys
 			Expect(k8sClient.Get(ctx, webhookSecretKey, webhookSecret)).To(Succeed())
@@ -2825,10 +2713,7 @@ spec:
 				component = createComponent(component)
 
 				// Component should be onboarded successfully with token auth
-				Eventually(func() bool {
-					component = getComponent(componentKey)
-					return len(component.Status.Versions) == 1
-				}, timeout, interval).Should(BeTrue())
+				component = waitForComponentStatusVersions(componentKey, 1)
 
 				// Verify component version status
 				verifyComponentVersionStatus(component.Status.Versions[0], "v1", "main", "succeeded", "", "")
@@ -2858,10 +2743,7 @@ spec:
 				Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
 				// Build should be triggered successfully
-				Eventually(func() bool {
-					component = getComponent(componentKey)
-					return component.Spec.Actions.TriggerBuild == ""
-				}, timeout, interval).Should(BeTrue())
+				component = waitForComponentSpecActionEmpty(componentKey, "trigger", "build")
 
 				// Verify Repository CR and Incomings was updated
 				repository := validatePaCRepository(component, scmSecretKey.Name, "password")
@@ -2880,10 +2762,7 @@ spec:
 				Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
 				// Configuration should be created successfully
-				Eventually(func() bool {
-					component = getComponent(componentKey)
-					return !component.Spec.Actions.CreateConfiguration.AllVersions
-				}, timeout, interval).Should(BeTrue())
+				component = waitForComponentSpecActionEmpty(componentKey, "create", "allversions")
 
 				// Verify configuration merge URL is not empty
 				verifyComponentVersionStatus(component.Status.Versions[0], "v1", "main", "succeeded", "*", "")
@@ -2934,10 +2813,7 @@ spec:
 				component = createComponent(component)
 
 				// Component should be onboarded successfully with token auth
-				Eventually(func() bool {
-					component = getComponent(componentKey)
-					return len(component.Status.Versions) == 1
-				}, timeout, interval).Should(BeTrue())
+				component = waitForComponentStatusVersions(componentKey, 1)
 
 				// Verify component version status
 				verifyComponentVersionStatus(component.Status.Versions[0], "v1", "main", "succeeded", "", "")
@@ -2967,10 +2843,7 @@ spec:
 				Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
 				// Build should be triggered successfully
-				Eventually(func() bool {
-					component = getComponent(componentKey)
-					return component.Spec.Actions.TriggerBuild == ""
-				}, timeout, interval).Should(BeTrue())
+				component = waitForComponentSpecActionEmpty(componentKey, "trigger", "build")
 
 				// Verify Repository CR and Incomings was updated
 				repository := validatePaCRepository(component, scmSecretKey.Name, "password")
@@ -2989,10 +2862,7 @@ spec:
 				Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
 				// Configuration should be created successfully
-				Eventually(func() bool {
-					component = getComponent(componentKey)
-					return !component.Spec.Actions.CreateConfiguration.AllVersions
-				}, timeout, interval).Should(BeTrue())
+				component = waitForComponentSpecActionEmpty(componentKey, "create", "allversions")
 
 				// Verify configuration merge URL is not empty
 				verifyComponentVersionStatus(component.Status.Versions[0], "v1", "main", "succeeded", "*", "")
@@ -3046,10 +2916,7 @@ spec:
 				component = createComponent(component)
 
 				// Component should be onboarded successfully with token auth
-				Eventually(func() bool {
-					component = getComponent(componentKey)
-					return len(component.Status.Versions) == 1
-				}, timeout, interval).Should(BeTrue())
+				component = waitForComponentStatusVersions(componentKey, 1)
 
 				// Verify component version status
 				verifyComponentVersionStatus(component.Status.Versions[0], "v1", "main", "succeeded", "", "")
@@ -3079,10 +2946,7 @@ spec:
 				Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
 				// Build should be triggered successfully
-				Eventually(func() bool {
-					component = getComponent(componentKey)
-					return component.Spec.Actions.TriggerBuild == ""
-				}, timeout, interval).Should(BeTrue())
+				component = waitForComponentSpecActionEmpty(componentKey, "trigger", "build")
 
 				// Verify Repository CR and Incomings was updated
 				repository := validatePaCRepository(component, scmSecretKey.Name, "password")
@@ -3101,10 +2965,7 @@ spec:
 				Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
 				// Configuration should be created successfully
-				Eventually(func() bool {
-					component = getComponent(componentKey)
-					return !component.Spec.Actions.CreateConfiguration.AllVersions
-				}, timeout, interval).Should(BeTrue())
+				component = waitForComponentSpecActionEmpty(componentKey, "create", "allversions")
 
 				// Verify configuration merge URL is not empty
 				verifyComponentVersionStatus(component.Status.Versions[0], "v1", "main", "succeeded", "*", "")
@@ -3142,14 +3003,10 @@ spec:
 		})
 
 		It("should not block deletion if cleanup fails", func() {
-			component := getSampleComponentData(componentKey)
-			component = createComponent(component)
+			createComponent(getSampleComponentData(componentKey))
 
 			// Wait for onboarding
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			component := waitForComponentStatusVersions(componentKey, 1)
 
 			// Verify component version status
 			verifyComponentVersionStatus(component.Status.Versions[0], "version1", "main", "succeeded", "", "")
@@ -3164,14 +3021,10 @@ spec:
 		})
 
 		It("should not attempt to create service account during deletion", func() {
-			component := getSampleComponentData(componentKey)
-			component = createComponent(component)
+			createComponent(getSampleComponentData(componentKey))
 
 			// Wait for onboarding to complete
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 1
-			}, timeout, interval).Should(BeTrue())
+			component := waitForComponentStatusVersions(componentKey, 1)
 
 			// Verify component version status
 			verifyComponentVersionStatus(component.Status.Versions[0], "version1", "main", "succeeded", "", "")
@@ -3206,7 +3059,7 @@ spec:
 			// Wait for onboarding to complete
 			Eventually(func() bool {
 				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 1 && len(component.Finalizers) > 0
+				return len(component.Status.Versions) == 1 && len(component.Finalizers) == 1
 			}, timeout, interval).Should(BeTrue())
 
 			// Verify component version status
@@ -3294,7 +3147,7 @@ spec:
 			// Wait for onboarding to complete
 			Eventually(func() bool {
 				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 1 && len(component.Finalizers) > 0
+				return len(component.Status.Versions) == 1 && len(component.Finalizers) == 1
 			}, timeout, interval).Should(BeTrue())
 
 			// Verify component version status
@@ -3499,13 +3352,10 @@ spec:
 					},
 				},
 			})
-			component = createComponent(component)
+			createComponent(component)
 
 			// Wait for both versions to be onboarded
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 2
-			}, timeout, interval).Should(BeTrue())
+			waitForComponentStatusVersions(componentKey, 2)
 
 			// Verify v1 PR was created (invalid version should be ignored)
 			Eventually(func() bool {
@@ -3513,10 +3363,7 @@ spec:
 			}, timeout, interval).Should(BeTrue())
 
 			// CreateConfiguration action should be completely cleared (both valid and invalid versions)
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Spec.Actions.CreateConfiguration.Versions) == 0
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentSpecActionEmpty(componentKey, "create", "versions")
 
 			// Verify both versions in status
 			versionMap := make(map[string]compapiv1alpha1.ComponentVersionStatus)
@@ -3555,10 +3402,7 @@ spec:
 			Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
 			// Wait for all versions to be onboarded
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 4
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 4)
 
 			// Verify v3 PR was created
 			Eventually(func() bool {
@@ -3651,10 +3495,7 @@ spec:
 			}, timeout, interval).Should(BeTrue())
 
 			// TriggerBuilds action should be cleared (invalid version should be removed)
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Spec.Actions.TriggerBuilds) == 0
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentSpecActionEmpty(componentKey, "trigger", "builds")
 
 			// Verify v1 trigger happened (v2 was triggered in PHASE 2, now v1 in PHASE 3)
 			Eventually(func() int {
@@ -3885,10 +3726,7 @@ spec:
 			}, timeout, interval).Should(BeTrue())
 
 			// Wait for both versions to be onboarded
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 2
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 2)
 
 			// Verify v1 PR was created (invalid version should be ignored)
 			Eventually(func() bool {
@@ -3896,10 +3734,7 @@ spec:
 			}, timeout, interval).Should(BeTrue())
 
 			// CreateConfiguration action should be completely cleared (both valid and invalid versions)
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Spec.Actions.CreateConfiguration.Versions) == 0
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentSpecActionEmpty(componentKey, "create", "versions")
 
 			// Verify both versions in status
 			versionMap := make(map[string]compapiv1alpha1.ComponentVersionStatus)
@@ -3938,10 +3773,7 @@ spec:
 			Expect(k8sClient.Update(ctx, component)).To(Succeed())
 
 			// Wait for all versions to be onboarded
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Status.Versions) == 4
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentStatusVersions(componentKey, 4)
 
 			// Verify v3 PR was created
 			Eventually(func() bool {
@@ -4040,10 +3872,7 @@ spec:
 			}, timeout, interval).Should(BeTrue())
 
 			// TriggerBuilds action should be cleared (invalid version should be removed)
-			Eventually(func() bool {
-				component = getComponent(componentKey)
-				return len(component.Spec.Actions.TriggerBuilds) == 0
-			}, timeout, interval).Should(BeTrue())
+			component = waitForComponentSpecActionEmpty(componentKey, "trigger", "builds")
 
 			// Verify v1 trigger happened (v2 was triggered in PHASE 2, now v1 in PHASE 3)
 			Eventually(func() int {
@@ -4144,10 +3973,7 @@ var _ = Describe("Client Update behavior verification", func() {
 		component = createComponent(component)
 
 		// Wait for component to be created and get initial values
-		Eventually(func() bool {
-			component = getComponent(componentKey)
-			return component.Status.Message != ""
-		}, timeout, interval).Should(BeTrue())
+		component = waitForComponentStatusMessage(componentKey, false)
 		component = getComponent(componentKey)
 
 		initialGeneration := component.Generation
@@ -4172,10 +3998,7 @@ var _ = Describe("Client Update behavior verification", func() {
 		component = createComponent(component)
 
 		// Wait for component to be created and reconciled
-		Eventually(func() bool {
-			component = getComponent(componentKey)
-			return component.Status.Message != ""
-		}, timeout, interval).Should(BeTrue())
+		component = waitForComponentStatusMessage(componentKey, false)
 		component = getComponent(componentKey)
 
 		initialGeneration := component.Generation
