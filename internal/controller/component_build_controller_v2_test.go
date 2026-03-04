@@ -3972,10 +3972,10 @@ var _ = Describe("Client Update behavior verification", func() {
 		component := getSampleComponentData(componentKey)
 		component.Spec.Source.GitURL = ""
 		component.Spec.Source.Versions = nil
-		component = createComponent(component)
+		createComponent(component)
 
 		// Wait for component to be created and get initial values
-		component = waitForComponentStatusMessage(componentKey, false)
+		waitForComponentStatusMessage(componentKey, false)
 		component = getComponent(componentKey)
 
 		initialGeneration := component.Generation
@@ -3997,10 +3997,10 @@ var _ = Describe("Client Update behavior verification", func() {
 		component := getSampleComponentData(componentKey)
 		component.Spec.Source.GitURL = ""
 		component.Spec.Source.Versions = nil
-		component = createComponent(component)
+		createComponent(component)
 
 		// Wait for component to be created and reconciled
-		component = waitForComponentStatusMessage(componentKey, false)
+		waitForComponentStatusMessage(componentKey, false)
 		component = getComponent(componentKey)
 
 		initialGeneration := component.Generation
