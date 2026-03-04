@@ -289,8 +289,7 @@ var _ = Describe("Component build controller new model", func() {
 		})
 	})
 
-	// Tests for component validation errors
-	// These tests verify validation errors (version fields, required spec fields, missing PaC secret)
+	// These tests verifies component validation errors (version fields, required spec fields, missing PaC secret)
 	// are properly reported in component status
 	Context("Component validation errors", func() {
 		var (
@@ -307,43 +306,46 @@ var _ = Describe("Component build controller new model", func() {
 		})
 
 		It("should set error status when version name is empty", func() {
-			createComponent(getComponentData(componentConfig{
+			component := getComponentData(componentConfig{
 				componentKey: componentKey,
 				versions: []compapiv1alpha1.ComponentVersion{
 					{Name: "", Revision: "main"},
 				},
-			}))
+			})
+			createComponent(component)
 
-			component := waitForComponentStatusMessage(componentKey, false)
+			component = waitForComponentStatusMessage(componentKey, false)
 
 			Expect(component.Status.Message).To(ContainSubstring("validation failed"))
 			Expect(component.Status.Message).To(ContainSubstring("name is required"))
 		})
 
 		It("should set error status when version revision is empty", func() {
-			createComponent(getComponentData(componentConfig{
+			component := getComponentData(componentConfig{
 				componentKey: componentKey,
 				versions: []compapiv1alpha1.ComponentVersion{
 					{Name: "v1.0", Revision: ""},
 				},
-			}))
+			})
+			createComponent(component)
 
-			component := waitForComponentStatusMessage(componentKey, false)
+			component = waitForComponentStatusMessage(componentKey, false)
 
 			Expect(component.Status.Message).To(ContainSubstring("validation failed"))
 			Expect(component.Status.Message).To(ContainSubstring("revision is required"))
 		})
 
 		It("should set error status for duplicate sanitized version names", func() {
-			createComponent(getComponentData(componentConfig{
+			component := getComponentData(componentConfig{
 				componentKey: componentKey,
 				versions: []compapiv1alpha1.ComponentVersion{
 					{Name: "v1.0", Revision: "main"},    // becomes "v1-0" after sanitization
 					{Name: "v1_0", Revision: "develop"}, // becomes "v1-0" after sanitization
 				},
-			}))
+			})
+			createComponent(component)
 
-			component := waitForComponentStatusMessage(componentKey, false)
+			component = waitForComponentStatusMessage(componentKey, false)
 
 			Expect(component.Status.Message).To(ContainSubstring("validation failed"))
 			Expect(component.Status.Message).To(ContainSubstring("conflicts with version"))
