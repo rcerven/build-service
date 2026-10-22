@@ -245,10 +245,53 @@ func (g *GitlabClient) filesExistInDirectory(projectPath, branchName, directoryP
 	return existingFiles, nil
 }
 
+// TODO remove after only new model is used and old model is gone
+// filesInDirectory returns all files existing under the specified directory.
+func (g *GitlabClient) filesInDirectory(projectPath, branchName, directoryPath string) ([]gp.RepositoryFile, error) {
+	files := []gp.RepositoryFile{}
+
+	opts := &gitlab.ListTreeOptions{
+		Ref:         &branchName,
+		Path:        &directoryPath,
+		ListOptions: gitlab.ListOptions{PerPage: 100},
+	}
+	dirContent, resp, err := g.client.Repositories.ListTree(projectPath, opts)
+	if err != nil {
+		if resp == nil {
+			return nil, err
+		}
+		if resp.StatusCode == 404 {
+			return files, nil
+		}
+		return files, err
+	}
+
+	for _, file := range dirContent {
+		if file.Type != "blob" {
+			continue
+		}
+		files = append(files, gp.RepositoryFile{FullPath: file.Path})
+	}
+
+	return files, nil
+}
+
+// commitFilesIntoBranch creates a commit with the given files in the specified branch.
+// Files marked with Delete are removed instead of added/updated, all within the same commit.
 func (g *GitlabClient) commitFilesIntoBranch(projectPath, branchName, commitMessage, authorName, authorEmail string, signedOff bool, files []gp.RepositoryFile) error {
 	var actions []*gitlab.CommitActionOptions
 	for _, file := range files {
 		filePath := file.FullPath
+
+		if file.Delete {
+			fileAction := gitlab.FileDelete
+			actions = append(actions, &gitlab.CommitActionOptions{
+				Action:   &fileAction,
+				FilePath: &filePath,
+			})
+			continue
+		}
+
 		content := string(file.Content)
 		var fileAction gitlab.FileActionValue
 

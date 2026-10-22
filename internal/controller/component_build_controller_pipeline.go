@@ -19,7 +19,9 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -967,4 +969,320 @@ func getPipelineRunDefinitionNameOldModel(componentName string, isPullRequest bo
 		pipelineNameSuffix = pipelineRunOnPRSuffix
 	}
 	return componentName + pipelineNameSuffix
+}
+
+// TODO remove after only new model is used and old model is gone
+// generateMigrationMergeRequestSourceBranch returns the source branch name used for the pipeline runs
+// migration merge request of a given revision. Old components sharing the same revision are migrated
+// together in a single merge request, so the branch is per-revision rather than per-component/version.
+func generateMigrationMergeRequestSourceBranch(revision string) string {
+	return fmt.Sprintf("%smigrate-%s", pacMergeRequestSourceBranchPrefix, revision)
+}
+
+// TODO remove after only new model is used and old model is gone
+// oldModelPipelineRunCandidate is an old-model PipelineRun definition found in the .tekton directory,
+// identified by the presence of the ComponentNameLabelNameOldModel label.
+type oldModelPipelineRunCandidate struct {
+	path             string
+	pipelineRun      tektonapi.PipelineRun
+	oldComponentName string
+	isPullRequest    bool
+}
+
+// TODO remove after only new model is used and old model is gone
+// listOldModelPipelineRunCandidates downloads and parses every file in the .tekton directory of the given
+// revision, returning those that are old-model PipelineRun definitions. Used to find pipeline run files
+// that were renamed by the user, so they can't be found at their expected old-model path.
+func listOldModelPipelineRunCandidates(gitClient gp.GitProviderClient, repoUrl, revision string) ([]oldModelPipelineRunCandidate, error) {
+	dirFiles, err := gitClient.GetFilesFromDirectory(repoUrl, revision, ".tekton")
+	if err != nil {
+		return nil, err
+	}
+
+	var candidates []oldModelPipelineRunCandidate
+	for _, file := range dirFiles {
+		content, err := gitClient.DownloadFileContent(repoUrl, revision, file.FullPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to download %s: %w", file.FullPath, err)
+		}
+		var pr tektonapi.PipelineRun
+		if err := yaml.Unmarshal(content, &pr); err != nil {
+			continue
+		}
+		oldComponentName := pr.Labels[ComponentNameLabelNameOldModel]
+		if oldComponentName == "" {
+			continue
+		}
+		_, isPullRequest := pr.Annotations[gitPRAnnotationNameOldModel]
+		candidates = append(candidates, oldModelPipelineRunCandidate{
+			path:             file.FullPath,
+			pipelineRun:      pr,
+			oldComponentName: oldComponentName,
+			isPullRequest:    isPullRequest,
+		})
+	}
+	return candidates, nil
+}
+
+// TODO remove after only new model is used and old model is gone
+// transformPipelineRunForMigration rewrites an old-model PipelineRun definition in place so it matches
+// the new-model component/version naming, labels and annotations.
+func transformPipelineRunForMigration(pr *tektonapi.PipelineRun, component *compv1alpha1.Component, versionInfo *VersionInfo, isPullRequest bool) {
+	pr.Name = getPipelineRunDefinitionName(component.Name, versionInfo.SanitizedVersion, isPullRequest)
+
+	if pr.Labels == nil {
+		pr.Labels = map[string]string{}
+	}
+	delete(pr.Labels, ApplicationNameLabelName)
+	delete(pr.Labels, ComponentNameLabelNameOldModel)
+	pr.Labels[ComponentNameLabelName] = component.Name
+	delete(pr.Labels, PipelineRunTypeLabelNameOldModel)
+	pr.Labels[PipelineRunTypeLabelName] = "build"
+
+	if pr.Annotations == nil {
+		pr.Annotations = map[string]string{}
+	}
+	renameAnnotation(pr.Annotations, gitRepoAtShaAnnotationNameOldModel, gitRepoAtShaAnnotationName)
+	renameAnnotation(pr.Annotations, gitCommitShaAnnotationNameOldModel, gitCommitShaAnnotationName)
+	if isPullRequest {
+		renameAnnotation(pr.Annotations, gitPRAnnotationNameOldModel, gitPRAnnotationName)
+	}
+	renameAnnotation(pr.Annotations, gitTargetBranchAnnotationNameOldModel, gitTargetBranchAnnotationName)
+
+	if versionInfo.Context != "" {
+		pr.Annotations[ContextAnnotationName] = versionInfo.Context
+	}
+	pr.Annotations[VersionAnnotationName] = versionInfo.OriginalVersion
+
+	if celExpression, ok := pr.Annotations[pacCelExpressionAnnotationName]; ok {
+		pr.Annotations[pacCelExpressionAnnotationName] = celExpression + ` && builds_enabled == "true"`
+	}
+
+	pr.Spec.TaskRunTemplate.ServiceAccountName = getBuildPipelineServiceAccountName(component.Name)
+}
+
+// TODO remove after only new model is used and old model is gone
+// renameAnnotation moves the value stored under oldKey to newKey, if present.
+func renameAnnotation(annotations map[string]string, oldKey, newKey string) {
+	if value, ok := annotations[oldKey]; ok {
+		delete(annotations, oldKey)
+		annotations[newKey] = value
+	}
+}
+
+// TODO remove after only new model is used and old model is gone
+// collectPipelineRunMigrationFiles finds and transforms old-model pipeline run definitions for the given
+// old components (all sharing the given revision), returning the combined list of repository file changes
+// (renames via delete+add, or in-place content updates) needed to migrate them in a single merge request.
+// Old components for which no pipeline run file could be found are returned in skippedOldComponents (not an
+// error - per notes.txt this requires manual fixing and won't resolve itself on retry).
+func collectPipelineRunMigrationFiles(
+	ctx context.Context,
+	component *compv1alpha1.Component,
+	gitClient gp.GitProviderClient,
+	repoUrl, revision string,
+	versionInfoByOldComponent map[string]*VersionInfo,
+) (files []gp.RepositoryFile, migratedOldComponents []string, skippedOldComponents []string, err error) {
+	log := ctrllog.FromContext(ctx)
+
+	candidates, err := listOldModelPipelineRunCandidates(gitClient, repoUrl, revision)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to list old model pipeline run files in .tekton directory at revision %s: %w", revision, err)
+	}
+
+	oldComponentNames := slices.Collect(maps.Keys(versionInfoByOldComponent))
+	slices.Sort(oldComponentNames)
+
+	for _, oldComponentName := range oldComponentNames {
+		versionInfo := versionInfoByOldComponent[oldComponentName]
+		foundPush, foundPR := false, false
+
+		for _, isPullRequest := range []bool{false, true} {
+			oldPath := getPipelineRunDefinitionFilePathOldModel(oldComponentName, isPullRequest)
+			exists, err := gitClient.IsFileExist(repoUrl, revision, oldPath)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("failed to check if %s exists: %w", oldPath, err)
+			}
+
+			matchedViaRename := false
+			if exists {
+				content, err := gitClient.DownloadFileContent(repoUrl, revision, oldPath)
+				if err != nil {
+					return nil, nil, nil, fmt.Errorf("failed to download %s: %w", oldPath, err)
+				}
+				pr := &tektonapi.PipelineRun{}
+				if err := yaml.Unmarshal(content, pr); err == nil && pr.Labels[ComponentNameLabelNameOldModel] == oldComponentName {
+					transformPipelineRunForMigration(pr, component, versionInfo, isPullRequest)
+					newContent, err := yaml.Marshal(pr)
+					if err != nil {
+						return nil, nil, nil, fmt.Errorf("failed to marshal migrated pipeline run for component %s: %w", oldComponentName, err)
+					}
+					newPath := getPipelineRunDefinitionFilePath(component.Name, versionInfo.SanitizedVersion, isPullRequest)
+					files = append(files, gp.RepositoryFile{FullPath: oldPath, Delete: true})
+					files = append(files, gp.RepositoryFile{FullPath: newPath, Content: newContent})
+					matchedViaRename = true
+				}
+			}
+
+			if matchedViaRename {
+				if isPullRequest {
+					foundPR = true
+				} else {
+					foundPush = true
+				}
+				continue
+			}
+
+			for _, candidate := range candidates {
+				if candidate.oldComponentName != oldComponentName || candidate.isPullRequest != isPullRequest {
+					continue
+				}
+				pr := candidate.pipelineRun.DeepCopy()
+				transformPipelineRunForMigration(pr, component, versionInfo, isPullRequest)
+				newContent, err := yaml.Marshal(pr)
+				if err != nil {
+					return nil, nil, nil, fmt.Errorf("failed to marshal migrated pipeline run for component %s: %w", oldComponentName, err)
+				}
+				files = append(files, gp.RepositoryFile{FullPath: candidate.path, Content: newContent})
+				if isPullRequest {
+					foundPR = true
+				} else {
+					foundPush = true
+				}
+				break
+			}
+		}
+
+		if foundPush || foundPR {
+			migratedOldComponents = append(migratedOldComponents, oldComponentName)
+		} else {
+			log.Info("no pipeline run files found for old component, skipping its migration", "OldComponent", oldComponentName, l.Audit, "true")
+			skippedOldComponents = append(skippedOldComponents, oldComponentName)
+		}
+	}
+
+	return files, migratedOldComponents, skippedOldComponents, nil
+}
+
+// TODO remove after only new model is used and old model is gone
+// openMigrationMergeRequest creates (or ensures) a single merge request with all given file changes
+// (additions, updates and deletions) for pipeline runs migrated at the given revision.
+func (r *ComponentBuildReconciler) openMigrationMergeRequest(ctx context.Context, component *compv1alpha1.Component, revision string, files []gp.RepositoryFile, gitClient gp.GitProviderClient, pacConfig map[string][]byte) (string, error) {
+	log := ctrllog.FromContext(ctx)
+
+	gitProvider, _ := getGitProvider(*component)
+	repoUrl := getGitRepoUrl(*component)
+
+	authorName := "konflux"
+	authorEmail := konfluxAuthorEmail
+	namePrefix := "Konflux"
+
+	isAppUsed := common.IsPaCApplicationConfigured(gitProvider, pacConfig)
+	if isAppUsed {
+		if appName, appSlug, appBotUserId, err := gitClient.GetConfiguredGitAppName(); err == nil {
+			namePrefix = appName
+			authorName = fmt.Sprintf("%s[bot]", appSlug)
+			if appBotUserId != 0 {
+				authorEmail = fmt.Sprintf("%d+%s[bot]@users.noreply.github.com", appBotUserId, appSlug)
+			}
+		} else if gitProvider == "github" {
+			log.Error(err, "failed to get PaC GitHub Application name", l.Action, l.ActionView, l.Audit, "true")
+		}
+	}
+
+	commitMessage := fmt.Sprintf("%s migrate pipeline runs on %s", namePrefix, revision)
+	mrData := &gp.MergeRequestData{
+		CommitMessage:  commitMessage,
+		SignedOff:      true,
+		BranchName:     generateMigrationMergeRequestSourceBranch(revision),
+		BaseBranchName: revision,
+		Title:          commitMessage,
+		Text:           mergeRequestDescription,
+		AuthorName:     authorName,
+		AuthorEmail:    authorEmail,
+		Files:          files,
+	}
+
+	mrUrl, err := gitClient.EnsureMigrationMergeRequest(repoUrl, mrData)
+	if err != nil {
+		return "", err
+	}
+
+	var mrMessage string
+	if mrUrl != "" {
+		mrMessage = fmt.Sprintf("Pipeline runs migration merge request: %s, for revision: %s", mrUrl, revision)
+	} else {
+		mrMessage = fmt.Sprintf("Pipeline runs migration is up to date for revision: %s", revision)
+	}
+	log.Info(mrMessage)
+	r.EventRecorder.Eventf(component, nil, "Normal", "PipelineRunsMigration", "MigratePipelineRuns", mrMessage)
+	return mrUrl, nil
+}
+
+// TODO remove after only new model is used and old model is gone
+// MigratePipelineRunsInRepository migrates pipeline run definitions in the Component's git repository from
+// the old model to the new model, for the old Components listed in migrationMap (old component name -> new
+// version name). Old components sharing the same target revision are migrated together in a single merge
+// request.
+//
+// Returns the migration map with entries removed for old components whose migration has been resolved:
+// either a merge request was successfully created/ensured for them, their target version no longer exists
+// in the component spec, or no pipeline run files could be found for them (the latter two require manual
+// intervention and won't resolve themselves on retry). Entries for old components that hit a transient
+// error while creating their merge request are kept so they are retried on the next reconcile.
+func (r *ComponentBuildReconciler) MigratePipelineRunsInRepository(ctx context.Context, component *compv1alpha1.Component, existingSpecVersions map[string]*VersionInfo, migrationMap map[string]string, gitClient gp.GitProviderClient, pacConfig map[string][]byte) (map[string]string, error) {
+	log := ctrllog.FromContext(ctx).WithName("migratePipelineRuns")
+
+	repoUrl := getGitRepoUrl(*component)
+
+	remainingMigrationMap := make(map[string]string, len(migrationMap))
+	revisionGroups := make(map[string]map[string]*VersionInfo) // revision -> old component name -> version info
+	for oldComponentName, newVersionName := range migrationMap {
+		remainingMigrationMap[oldComponentName] = newVersionName
+
+		versionInfo, exists := existingSpecVersions[newVersionName]
+		if !exists {
+			log.Info("version referenced by migration map no longer exists in component spec, skipping migration for old component", "OldComponent", oldComponentName, "Version", newVersionName, l.Audit, "true")
+			delete(remainingMigrationMap, oldComponentName)
+			continue
+		}
+
+		if revisionGroups[versionInfo.Revision] == nil {
+			revisionGroups[versionInfo.Revision] = make(map[string]*VersionInfo)
+		}
+		revisionGroups[versionInfo.Revision][oldComponentName] = versionInfo
+	}
+
+	revisions := slices.Collect(maps.Keys(revisionGroups))
+	slices.Sort(revisions)
+
+	var migrationErrors []error
+	for _, revision := range revisions {
+		files, migratedOldComponents, skippedOldComponents, err := collectPipelineRunMigrationFiles(ctx, component, gitClient, repoUrl, revision, revisionGroups[revision])
+		if err != nil {
+			log.Error(err, "failed to collect pipeline run files for migration", "Revision", revision)
+			migrationErrors = append(migrationErrors, err)
+			continue
+		}
+
+		for _, oldComponentName := range skippedOldComponents {
+			delete(remainingMigrationMap, oldComponentName)
+		}
+
+		if len(files) == 0 {
+			continue
+		}
+
+		if _, err := r.openMigrationMergeRequest(ctx, component, revision, files, gitClient, pacConfig); err != nil {
+			log.Error(err, "failed to create pipeline runs migration merge request", "Revision", revision)
+			migrationErrors = append(migrationErrors, err)
+			continue
+		}
+
+		for _, oldComponentName := range migratedOldComponents {
+			delete(remainingMigrationMap, oldComponentName)
+		}
+	}
+
+	return remainingMigrationMap, stderrors.Join(migrationErrors...)
 }

@@ -144,6 +144,61 @@ func (g *GithubClient) EnsurePaCMergeRequest(repoUrl string, d *gp.MergeRequestD
 	}
 }
 
+// EnsureMigrationMergeRequest creates or updates existing merge request with the given files, without checking
+// whether the files are already up to date, since the caller already knows the content changed.
+// TODO remove after only new model is used and old model is gone
+func (g *GithubClient) EnsureMigrationMergeRequest(repoUrl string, d *gp.MergeRequestData) (webUrl string, err error) {
+	owner, repository := getOwnerAndRepoFromUrl(repoUrl)
+
+	_, err = g.getBranch(owner, repository, d.BaseBranchName)
+	if err != nil {
+		return "", err
+	}
+
+	/*
+		// Check if Pipelines as Code configuration up to date in the main branch
+		upToDate, err := g.filesUpToDate(owner, repository, d.BaseBranchName, d.Files)
+		if err != nil {
+			return "", err
+		}
+		if upToDate {
+			// Nothing to do, the configuration is alredy in the main branch of the repository
+			return "", nil
+		}
+	*/
+
+	// Check if branch with a proposal exists
+	branchExists, err := g.branchExist(owner, repository, d.BranchName)
+	if err != nil {
+		return "", err
+	}
+
+	if branchExists {
+		pr, err := g.findPullRequestByBranchesWithinRepository(owner, repository, d.BranchName, d.BaseBranchName)
+		if err != nil {
+			return "", err
+		}
+		if pr != nil {
+			return *pr.HTMLURL, nil
+		}
+
+		return g.createPullRequestWithinRepository(owner, repository, d.BranchName, d.BaseBranchName, d.Title, d.Text)
+	}
+
+	// Create branch, commit and pull request
+	branchRef, err := g.createBranch(owner, repository, d.BranchName, d.BaseBranchName)
+	if err != nil {
+		return "", err
+	}
+
+	err = g.addCommitToBranch(owner, repository, d.AuthorName, d.AuthorEmail, d.CommitMessage, d.SignedOff, d.Files, branchRef)
+	if err != nil {
+		return "", err
+	}
+
+	return g.createPullRequestWithinRepository(owner, repository, d.BranchName, d.BaseBranchName, d.Title, d.Text)
+}
+
 // UndoPaCMergeRequest creates or updates existing Pipelines as Code configuration removal merge request
 func (g *GithubClient) UndoPaCMergeRequest(repoUrl string, d *gp.MergeRequestData) (webUrl string, err error) {
 	owner, repository := getOwnerAndRepoFromUrl(repoUrl)
@@ -370,6 +425,14 @@ func (g *GithubClient) IsFileExist(repoUrl, branchName, filePath string) (bool, 
 		return false, err
 	}
 	return len(files) > 0, nil
+}
+
+// GetFilesFromDirectory returns list of files existing in the given directory of the given branch of the repository.
+// TODO remove after only new model is used and old model is gone
+func (g *GithubClient) GetFilesFromDirectory(repoUrl, branchName, directoryPath string) ([]gp.RepositoryFile, error) {
+	owner, repository := getOwnerAndRepoFromUrl(repoUrl)
+
+	return g.filesInDirectory(owner, repository, branchName, directoryPath)
 }
 
 func (g *GithubClient) DownloadFileContent(repoUrl, branchName, filePath string) ([]byte, error) {

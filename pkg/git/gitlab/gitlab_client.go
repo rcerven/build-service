@@ -130,6 +130,45 @@ func (g *GitlabClient) EnsurePaCMergeRequest(repoUrl string, d *gp.MergeRequestD
 	}
 }
 
+// EnsureMigrationMergeRequest creates or updates existing merge request with the given files, without checking
+// whether the files are already up to date, since the caller already knows the content changed.
+// TODO remove after only new model is used and old model is gone
+func (g *GitlabClient) EnsureMigrationMergeRequest(repoUrl string, d *gp.MergeRequestData) (webUrl string, err error) {
+	projectPath, err := getProjectPathFromRepoUrl(repoUrl)
+	if err != nil {
+		return "", err
+	}
+
+	mrBranchExists, err := g.branchExist(projectPath, d.BranchName)
+	if err != nil {
+		return "", err
+	}
+
+	if mrBranchExists {
+		mr, err := g.findMergeRequestByBranches(projectPath, d.BranchName, d.BaseBranchName)
+		if err != nil {
+			return "", err
+		}
+		if mr != nil {
+			// Merge request already exists
+			return mr.WebURL, nil
+		}
+
+		return g.createMergeRequestWithinRepository(projectPath, d.BranchName, d.BaseBranchName, d.Title, d.Text)
+	}
+
+	// Need to create branch and MR with the given files
+	if err := g.createBranch(projectPath, d.BranchName, d.BaseBranchName); err != nil {
+		return "", err
+	}
+
+	if err := g.commitFilesIntoBranch(projectPath, d.BranchName, d.CommitMessage, d.AuthorName, d.AuthorEmail, d.SignedOff, d.Files); err != nil {
+		return "", err
+	}
+
+	return g.createMergeRequestWithinRepository(projectPath, d.BranchName, d.BaseBranchName, d.Title, d.Text)
+}
+
 // UndoPaCMergeRequest creates or updates existing Pipelines as Code configuration removal merge request.
 // Returns the merge request web URL.
 // If there is no error and web URL is empty, it means that the merge request is not needed (the configuration has already been deleted).
@@ -340,6 +379,17 @@ func (g *GitlabClient) IsFileExist(repoUrl, branchName, filePath string) (bool, 
 		return false, err
 	}
 	return len(files) > 0, nil
+}
+
+// GetFilesFromDirectory returns list of files existing in the given directory of the given branch of the repository.
+// TODO remove after only new model is used and old model is gone
+func (g *GitlabClient) GetFilesFromDirectory(repoUrl, branchName, directoryPath string) ([]gp.RepositoryFile, error) {
+	projectPath, err := getProjectPathFromRepoUrl(repoUrl)
+	if err != nil {
+		return nil, err
+	}
+
+	return g.filesInDirectory(projectPath, branchName, directoryPath)
 }
 
 // IsRepositoryPublic returns true if the repository could be accessed without authentication
